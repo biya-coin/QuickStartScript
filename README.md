@@ -2,6 +2,13 @@
 **注意：**
 脚本默认设置 injective chain-id 为 injective-666，参数如不了解可以不需要动，直接执行就行。发生任何错误，找相关人员即可。
 
+**注意：**
+因为sepolia网络的波动，使用官方脚本部署合约时可能会失败，失败后重新运行集哦啊笨选项1即可。
+
+**注意：**
+默认安装injectived和peggo路径为：/home/ubuntu/go/bin/injectived
+
+
 
 ## 一、脚本功能概览
 
@@ -13,7 +20,7 @@
 - 启动 Injective 节点与 Peggo orchestrator
 - 自动给创世 EVM 地址补充 Sepolia ETH 余额
 - 提供只重启节点和桥、只配置 peggo 的快速入口
-- 提供链启动健康检查和按需 `unsafe-reset-all` 修复
+- 提供链启动健康检查并在失败时给出清晰提示，方便你按需选择是否手动重置链
 
 ---
 
@@ -68,7 +75,8 @@
 在脚本所在目录运行：
 
 ```bash
-bash biyaSetUp.sh
+chmod +x biyaSetUp.sh
+./biyaSetUp.sh
 ```
 
 会出现菜单：
@@ -80,8 +88,9 @@ bash biyaSetUp.sh
 # 3 - 从合约部署到跨链桥启动的完整流程（暂时禁用）
 3 - 仅配置 peggo (.env)
 4 - 只编译安装 injectived 和 peggo 并重启节点和bridge
+5 - 仅重启 Injective 节点和 peggo（不重新编译、不重新部署）
 
-请输入选择 [1/2/3/4] (默认 4):
+请输入选择 [1/2/3/4/5] (默认 4):
 ```
 
 ---
@@ -100,10 +109,7 @@ bash biyaSetUp.sh
 - 立即执行健康检查：
   - 调 `http://127.0.0.1:26657/status`，要求返回 JSON 中有 `"node_info"`
   - 若系统存在 tmux，还要求 tmux 会话 `inj` 存在
-  - 如果失败，会检查 `~/.injectived/logs/inj.log` 中是否包含  
-    `genesis doc hash in db does not match loaded genesis doc` 或  
-    `no last block time stored in state. Should not happen, did initialization happen correctly`  
-    若是，则自动执行一次 `unsafe-reset-all` 并重启节点，再做一次短检查
+  - 如检测失败，会检查 `~/.injectived/logs/inj.log` 中是否包含典型 genesis/state 错误，并在终端给出清晰提示，**不会自动执行 unsafe-reset-all**
 - 写入 `~/.peggo/.env`
 - 注册 orchestrator 地址（如 valset 已包含则跳过）
 - 启动 peggo orchestrator（tmux 会话 `orchestrator`）
@@ -140,11 +146,24 @@ bash biyaSetUp.sh
 - 停掉现有 `inj` / `orchestrator` tmux 与相关进程（不重置数据目录）
 - 使用新二进制：
   - 启动 Injective 节点
-  - 立即健康检查（RPC + tmux）并在必要时自动 `unsafe-reset-all` 一次
+  - 立即健康检查（RPC + tmux）；如检测失败，仅打印错误原因和建议（例如提示检查日志或手动重置链），**不会自动执行 unsafe-reset-all**
   - 节点确认正常后，启动 peggo orchestrator
 - 提示是否删除临时目录 `TMP_DIR`
 
 适合用于：**频繁改代码 / 升级二进制，但希望保留现有链状态**。
+
+### 选项 5：仅重启 Injective 节点和 peggo（不重新编译、不重新部署）
+
+对应 `restart_injective_and_peggo_only`：
+
+- 不重新编译 `injectived` / `peggo`，不修改 genesis，不部署合约
+- 仅做运行时重启：
+  - 调用 `cleanup_injective_and_peggo` 结束现有 `injectived` / `peggo` 进程和 `inj` / `orchestrator` tmux 会话
+  - 调用 `start_injective_node` 重新在 tmux 会话 `inj` 中启动 `injectived`
+  - 调用 `check_injective_health_or_fix` 做一次快速健康检查（RPC + tmux），如检测到典型 genesis/state 错误会在日志中给出提示，**不会自动重置链**
+  - 在节点通过检查后，调用 `start_peggo_orchestrator` 在 tmux 会话 `orchestrator` 中重新启动 peggo
+
+适合用于：**代码和链状态都已 OK，只是想重启进程/日志，或节点/peggo 偶发卡死时快速恢复**。
 
 ---
 
@@ -164,3 +183,4 @@ bash biyaSetUp.sh
 - 若遇到节点启动失败，请先查看：
   - 终端输出中 `check_injective_health_or_fix` 的日志；
   - `${INJ_HOME_DIR}/logs/inj.log` 的最近错误行。
+- 脚本内部会在运行时将 `$HOME/go/bin` 加入 `PATH`（`export PATH="$HOME/go/bin:$PATH"`），以优先使用 `make install` 生成的 `injectived` / `peggo` 二进制，避免与系统中其他版本混用。

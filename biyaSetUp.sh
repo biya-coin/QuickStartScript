@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 优先使用 Go 安装目录中的二进制（例如 /home/ubuntu/go/bin/injectived / peggo）
+export PATH="$HOME/go/bin:$PATH"
+
 ########## 配置项 ##########
 
 TMP_DIR="/tmp/injective-release"
@@ -559,57 +562,25 @@ check_injective_health_or_fix() {
     sleep 3
   done
 
-  echo "[injective] 节点在预期时间内未正常启动，将检查日志中是否存在初始化错误..."
+  echo "[injective] 节点在预期时间内未正常启动，将检查日志中是否存在初始化错误（仅提示，不自动重置链）..."
 
   local log_file="${INJ_HOME_DIR}/logs/inj.log"
   if [ ! -f "$log_file" ]; then
     echo "[injective] 警告: 未找到节点日志文件 ${log_file}，无法自动诊断错误" >&2
+    echo "[injective] 建议：先查看 bridge/setup 脚本输出，再手动检查 ${INJ_HOME_DIR} 下的日志。" >&2
     return 1
   fi
 
   if grep -q 'genesis doc hash in db does not match loaded genesis doc' "$log_file" \
      || grep -q 'no last block time stored in state. Should not happen, did initialization happen correctly' "$log_file"; then
-    echo "[injective] 检测到可能的初始化错误（genesis/state 不一致），尝试执行一次 unsafe-reset-all 修复..." >&2
-
-    if command_exists tmux; then
-      tmux kill-session -t inj 2>/dev/null || true
-    fi
-    pkill -f injectived 2>/dev/null || true
-
-    injectived tendermint unsafe-reset-all --keep-addr-book --home "${INJ_HOME_DIR}" || {
-      echo "[injective] 错误: unsafe-reset-all 执行失败，请手动检查链数据目录 ${INJ_HOME_DIR}" >&2
-      return 1
-    }
-
-    echo "[injective] 已执行 unsafe-reset-all，重新启动节点..."
-    start_injective_node
-
-    # 再做一次短周期健康检查
-    max_attempts=5
-    attempt=1
-    while [ "$attempt" -le "$max_attempts" ]; do
-      if curl -s "$rpc_url" | grep -q '"node_info"'; then
-        if command_exists tmux; then
-          if tmux has-session -t inj 2>/dev/null; then
-            echo "[injective] 在执行 unsafe-reset-all 后节点已成功启动 (attempt=${attempt}/${max_attempts})"
-            return 0
-          fi
-        else
-          echo "[injective] 在执行 unsafe-reset-all 后节点已成功启动 (attempt=${attempt}/${max_attempts})"
-          return 0
-        fi
-      fi
-      echo "[injective] 重启后的节点尚未就绪，等待 3 秒后重试 (${attempt}/${max_attempts})..."
-      attempt=$((attempt + 1))
-      sleep 3
-    done
-
-    echo "[injective] 警告: 执行 unsafe-reset-all 并重启后，节点仍未在预期时间内就绪，请手动检查 ${log_file}" >&2
-    return 1
-  else
-    echo "[injective] 未检测到已知的 genesis/state 初始化错误，请手动检查日志 ${log_file}" >&2
+    echo "[injective] 检测到可能的初始化错误（genesis/state 不一致）。" >&2
+    echo "[injective] 日志文件: ${log_file}" >&2
+    echo "[injective] 建议：使用专门的“重置链并重新注册 orchestrator”菜单选项进行修复。" >&2
     return 1
   fi
+
+  echo "[injective] 未检测到已知的 genesis/state 初始化错误，但节点仍未就绪，请手动检查 ${log_file}" >&2
+  return 1
 }
 
 ########## 写入 peggo 的 .env 配置 ##########
@@ -739,6 +710,71 @@ start_peggo_orchestrator() {
     tmux new -s orchestrator -d "peggo orchestrator 2>&1 | tee -a ./logs/orchestrator.log"
     echo "[peggo] 已在 tmux 会话 orchestrator 中启动 peggo orchestrator，日志: ${peggo_logs_dir}/orchestrator.log"
   )
+}
+
+########## 仅重启 Injective 节点和 peggo（不重新编译、不重新部署） ##########
+
+restart_injective_and_peggo_only() {
+  echo "[restart] 将仅重启 Injective 节点和 peggo orchestrator，不执行重新编译或重新部署。"
+
+  # 先停止现有 tmux 会话和裸进程
+  cleanup_injective_and_peggo
+
+  # 启动 injectived 节点
+  start_injective_node
+
+  # 检查节点健康状态，如有必要尝试修复
+  check_injective_health_or_fix || {
+    echo "[restart] 警告: Injective 节点在重启后未能通过健康检查，请手动检查日志。" >&2
+  }
+
+  # 启动 peggo orchestrator
+  start_peggo_orchestrator
+
+  echo "[restart] 已执行 Injective 节点与 peggo orchestrator 的重启流程。"
+}
+
+########## 重置链并重新注册 orchestrator（显式确认后执行 unsafe-reset-all） ##########
+
+reset_chain_and_reregister_orchestrator() {
+  echo "[reset] 警告：该操作将对 ${INJ_HOME_DIR} 执行 unsafe-reset-all，重置本地链状态。" >&2
+  echo "[reset] 这通常用于修复 genesis/state 不一致或 store 版本不匹配等严重错误。" >&2
+  read -r -p "[reset] 确认继续吗？输入 y 继续，其他键取消 [y/N]: " ans
+
+  case "$ans" in
+    y|Y)
+      ;;
+    *)
+      echo "[reset] 已取消链重置操作。"
+      return 0
+      ;;
+  esac
+
+  echo "[reset] 停止当前 injectived 进程和 tmux 会话..."
+  if command_exists tmux; then
+    tmux kill-session -t inj 2>/dev/null || true
+  fi
+  pkill -f injectived 2>/dev/null || true
+
+  echo "[reset] 正在对 ${INJ_HOME_DIR} 执行 unsafe-reset-all --keep-addr-book..."
+  injectived tendermint unsafe-reset-all --keep-addr-book --home "${INJ_HOME_DIR}" || {
+    echo "[reset] 错误：unsafe-reset-all 执行失败，请手动检查链数据目录 ${INJ_HOME_DIR}" >&2
+    return 1
+  }
+
+  echo "[reset] 已完成 unsafe-reset-all，准备重新启动节点..."
+  start_injective_node
+
+  echo "[reset] 等待节点重新启动并通过健康检查..."
+  if ! check_injective_health_or_fix; then
+    echo "[reset] 警告：节点在重置后未能通过健康检查，请检查日志后再重试。" >&2
+    return 1
+  fi
+
+  echo "[reset] 节点已就绪，开始重新注册 orchestrator 地址（如有必要）..."
+  register_orchestrator_address
+
+  echo "[reset] 链重置及 orchestrator 注册流程已完成。"
 }
 
 ########## 交互：是否重置 genesis ##########
@@ -1498,8 +1534,10 @@ main() {
   # echo "3 - 从合约部署到跨链桥启动的完整流程（暂时禁用）"
   echo "3 - 仅配置 peggo (.env)"
   echo "4 - 只编译安装 injectived 和 peggo 并重启节点和bridge"
+  echo "5 - 仅重启 Injective 节点和 peggo（不重新编译、不重新部署）"
+  # echo "6 - 重置链并重新注册 orchestrator（unsafe-reset-all + 重启节点，仅在需要时使用）"
 
-  read -r -p "请输入选择 [1/2/3/4] (默认 4): " choice
+  read -r -p "请输入选择 [1/2/3/4/5] (默认 4): " choice
 
   case "$choice" in
     1)
@@ -1513,6 +1551,9 @@ main() {
       ;;
     4)
       run_build_and_restart_only
+      ;;
+    5)
+      restart_injective_and_peggo_only
       ;;
     *)
       run_build_and_restart_only
