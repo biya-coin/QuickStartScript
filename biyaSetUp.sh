@@ -39,6 +39,11 @@ RESET_GENESIS=""   # 运行时由交互函数决定是否重置 genesis
 PEGGY_POWER_THRESHOLD="100"
 PEGGY_VALIDATOR_POWERS="4294967295"
 
+# Chainstream / JSON-RPC 相关配置（用于在节点启动时同时启用流服务）
+CHAINSTREAM_ADDR="${CHAINSTREAM_ADDR:-0.0.0.0:9999}"
+CHAINSTREAM_BUFFER_CAP="${CHAINSTREAM_BUFFER_CAP:-1000}"
+CHAINSTREAM_PUBLISHER_BUFFER_CAP="${CHAINSTREAM_PUBLISHER_BUFFER_CAP:-1000}"
+
 # 部署脚本 .env 参数（基于 .env.example）
 PEGGY_DEPLOYER_RPC_URI="${ETH_RPC_URL}"
 PEGGY_DEPLOYER_TX_GAS_PRICE="-1"       # -1 表示由部署脚本自行估算 gas price
@@ -533,8 +538,22 @@ start_injective_node() {
       tmux kill-session -t inj || true
     fi
 
-    tmux new -s inj -d "injectived start 2>&1 | tee -a ./logs/inj.log"
-    echo "[injective] 已在 tmux 会话 inj 中启动 injectived，日志: ${INJ_HOME_DIR}/logs/inj.log"
+    tmux new -s inj -d "injectived \
+      --log-level info \
+      --rpc.laddr tcp://0.0.0.0:26657 \
+      --json-rpc.address 0.0.0.0:8545 \
+      --json-rpc.ws-address 0.0.0.0:8546 \
+      --json-rpc.api 'eth,web3,net,txpool,debug,personal,inj' \
+      --json-rpc.enable=true \
+      --json-rpc.allow-unprotected-txs=true \
+      --json-rpc.txfee-cap=50 \
+      --optimistic-execution-enabled true \
+      --chainstream-server ${CHAINSTREAM_ADDR} \
+      --chainstream-buffer-cap ${CHAINSTREAM_BUFFER_CAP} \
+      --chainstream-publisher-buffer-cap ${CHAINSTREAM_PUBLISHER_BUFFER_CAP} \
+      --home ${INJ_HOME_DIR} \
+      start 2>&1 | tee -a ./logs/inj.log"
+    echo "[injective] 已在 tmux 会话 inj 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/inj.log"
   )
 }
 
@@ -1518,7 +1537,7 @@ main() {
   echo "# 1、下载仓库 biya-coin/injective-core"
   echo "# 2、安装依赖: go mod tidy"
   echo "# 3、make install，构建出 injectived 和 peggo"
-  echo "# 4、将 injectived 和 peggo 安装到系统 PATH（如 /usr/bin），可直接执行"
+  echo "# 4、将 injectived 和 peggo 安装到系统 PATH（当前默认 $HOME/go/bin），可直接执行"
   echo "# 5、将 Peggy 合约部署到 Sepolia"
   echo "# 6、初始化 Injective 链：写入 Peggy 合约信息和 validator 初始信息到 genesis.json"
   echo "# 7、启动 Injective 节点"

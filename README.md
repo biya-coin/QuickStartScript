@@ -3,7 +3,7 @@
 脚本默认设置 injective chain-id 为 injective-666，参数如不了解可以不需要动，直接执行就行。发生任何错误，找相关人员即可。
 
 **注意：**
-因为sepolia网络的波动，使用官方脚本部署合约时可能会失败，失败后重新运行集哦啊笨选项1即可。
+因为sepolia网络的波动，使用官方脚本部署合约时可能会失败，失败后重新运行选择选项1即可。
 
 **注意：**
 默认安装injectived和peggo路径为：/home/ubuntu/go/bin/injectived
