@@ -626,9 +626,9 @@ write_peggo_env() {
     local tmp_export_file
     tmp_export_file="$(mktemp)"
 
-    echo "[peggo] 现在将前台执行 'injectived keys unsafe-export-eth-key genesis'，请根据提示输入密码..."
-    echo "[peggo] 自动输入默认密码 (using expect)..."
-    /usr/bin/expect <<EOF > "$tmp_export_file"
+    if command_exists expect; then
+      echo "[peggo] 现在将前台执行 'injectived keys unsafe-export-eth-key genesis'，并使用 expect 自动输入默认密码..."
+      /usr/bin/expect <<EOF > "$tmp_export_file"
 spawn injectived keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
 expect "Enter key password:"
 send "12345678\r"
@@ -637,11 +637,38 @@ send "12345678\r"
 expect eof
 EOF
 
+      if [ -s "$tmp_export_file" ]; then
+        exported_genesis_eth_pk="$(grep -oE '[0-9a-fA-F]{64}' "$tmp_export_file" | tail -n1)"
+      fi
+      rm -f "$tmp_export_file"
+    else
+      echo "[peggo] 未检测到 expect，将尝试自动安装 expect (apt-get)..." >&2
+      if command_exists sudo; then
+        sudo apt-get update -y && sudo apt-get install -y expect || true
+      else
+        apt-get update -y && apt-get install -y expect || true
+      fi
 
-    if [ -s "$tmp_export_file" ]; then
-      exported_genesis_eth_pk="$(grep -oE '[0-9a-fA-F]{64}' "$tmp_export_file" | tail -n1)"
+      if command_exists expect; then
+        echo "[peggo] expect 安装成功，继续自动导出 genesis EVM 私钥..."
+        /usr/bin/expect <<EOF > "$tmp_export_file"
+spawn injectived keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
+expect "Enter key password:"
+send "12345678\r"
+expect "Enter keyring passphrase"
+send "12345678\r"
+expect eof
+EOF
+
+        if [ -s "$tmp_export_file" ]; then
+          exported_genesis_eth_pk="$(grep -oE '[0-9a-fA-F]{64}' "$tmp_export_file" | tail -n1)"
+        fi
+        rm -f "$tmp_export_file"
+      else
+        echo "[peggo] 警告: 未能安装 expect，将跳过自动导出 genesis EVM 私钥，请稍后手动填写 ~/.peggo/.env 中的 PEGGO_ETH_PK" >&2
+        rm -f "$tmp_export_file"
+      fi
     fi
-    rm -f "$tmp_export_file"
   else
     echo "[peggo] 警告: 未找到 injectived 命令，无法自动导出 genesis EVM 私钥" >&2
   fi
@@ -657,7 +684,7 @@ PEGGO_ENV="local"
 PEGGO_LOG_LEVEL="info"
 
 PEGGO_COSMOS_CHAIN_ID="${INJ_CHAIN_ID}"
-PEGGO_COSMOS_GRPC="tcp://localhost:9900"
+PEGGO_COSMOS_GRPC="tcp://localhost:9090"
 PEGGO_TENDERMINT_RPC="http://127.0.0.1:26657"
 
 PEGGO_COSMOS_FEE_DENOM="inj"
@@ -1241,6 +1268,12 @@ setup_injective_chain() {
   update_and_sync_injective_core
 
   echo "[chain] 开始执行 Injective 节点初始化，chain-id=${INJ_CHAIN_ID}"
+
+  # 在执行官方 setup.sh 之前，确保清理旧的 INJ_HOME_DIR，避免其内部因目录已存在而直接退出
+  if [ -d "${INJ_HOME_DIR}" ]; then
+    echo "[chain] 检测到已存在的 Injective 数据目录 ${INJ_HOME_DIR}，将先删除该目录以重新初始化节点数据"
+    rm -rf "${INJ_HOME_DIR}"
+  fi
 
   # 1) 定位本地 injective-core/setup.sh
   local SCRIPT_DIR

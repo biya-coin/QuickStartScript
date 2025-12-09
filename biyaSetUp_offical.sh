@@ -28,8 +28,8 @@ TARGET_ETH_BALANCE="100000000000000000"  # 0.1 ETH
 
 # Injective 链配置
 INJ_CHAIN_ID="injective-666"              # 官方 setup.sh 中使用的 chain-id，可按需修改
-INJHOME="$HOME/.injectived"              # 链数据目录，供本脚本和 injective-core/setup.sh 共用
-INJ_GENESIS_PATH="${INJHOME}/config/genesis.json"
+INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
+INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
 INJ_OFFICIAL_SETUP_URL="https://raw.githubusercontent.com/InjectiveLabs/injective-chain-releases/master/scripts/setup.sh"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
 
@@ -53,7 +53,7 @@ PEGGY_DEPLOYER_FROM_PK="${ETH_PRIVATE_KEY}"
 
 # 使用 biya-coin 的仓库
 INJECTIVE_CORE_REPO="https://github.com/biya-coin/injective-core.git"
-INJECTIVE_CORE_DIR="${TMP_DIR}/injective-core"
+INJECTIVE_CORE_DIR="${TMP_DIR}/injective-core-src"
 
 UNAME_OUT="$(uname -s)"
 case "${UNAME_OUT}" in
@@ -461,7 +461,7 @@ EOF
 
   # 同时更新 app.toml 中的 minimum-gas-prices，便于后续交易使用较低 gas price
   local app_toml
-  app_toml="${INJHOME}/config/app.toml"
+  app_toml="${INJ_HOME_DIR}/config/app.toml"
   if [ -f "$app_toml" ]; then
     if sed -i 's/^minimum-gas-prices *= ".*"/minimum-gas-prices = "0.0000001inj"/' "$app_toml"; then
       echo "[genesis] 已将 app.toml 中的 minimum-gas-prices 设置为 0.0000001inj"
@@ -521,18 +521,18 @@ register_orchestrator_address() {
 ########## 启动 injectived 节点（tmux + 日志） ##########
 
 start_injective_node() {
-  echo "[injective] 在 ${INJHOME} 中通过 tmux 启动 injectived，并输出日志到 logs/inj.log"
+  echo "[injective] 在 ${INJ_HOME_DIR} 中通过 tmux 启动 injectived，并输出日志到 logs/inj.log"
 
   if ! command_exists tmux; then
     echo "[injective] 警告: 未检测到 tmux，请先安装 tmux (例如: sudo apt-get install -y tmux)" >&2
     return 0
   fi
 
-  mkdir -p "${INJHOME}/logs"
+  mkdir -p "${INJ_HOME_DIR}/logs"
   # 启动前清理旧日志文件
-  rm -f "${INJHOME}/logs/inj.log"
+  rm -f "${INJ_HOME_DIR}/logs/inj.log"
   (
-    cd "${INJHOME}" || exit 1
+    cd "${INJ_HOME_DIR}" || exit 1
     if tmux has-session -t inj 2>/dev/null; then
       echo "[injective] 检测到已有 tmux 会话 inj，先关闭旧会话"
       tmux kill-session -t inj || true
@@ -551,9 +551,9 @@ start_injective_node() {
       --chainstream-server ${CHAINSTREAM_ADDR} \
       --chainstream-buffer-cap ${CHAINSTREAM_BUFFER_CAP} \
       --chainstream-publisher-buffer-cap ${CHAINSTREAM_PUBLISHER_BUFFER_CAP} \
-      --home ${INJHOME} \
+      --home ${INJ_HOME_DIR} \
       start 2>&1 | tee -a ./logs/inj.log"
-    echo "[injective] 已在 tmux 会话 inj 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJHOME}/logs/inj.log"
+    echo "[injective] 已在 tmux 会话 inj 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/inj.log"
   )
 }
 
@@ -583,10 +583,10 @@ check_injective_health_or_fix() {
 
   echo "[injective] 节点在预期时间内未正常启动，将检查日志中是否存在初始化错误（仅提示，不自动重置链）..."
 
-  local log_file="${INJHOME}/logs/inj.log"
+  local log_file="${INJ_HOME_DIR}/logs/inj.log"
   if [ ! -f "$log_file" ]; then
     echo "[injective] 警告: 未找到节点日志文件 ${log_file}，无法自动诊断错误" >&2
-    echo "[injective] 建议：先查看 bridge/setup 脚本输出，再手动检查 ${INJHOME} 下的日志。" >&2
+    echo "[injective] 建议：先查看 bridge/setup 脚本输出，再手动检查 ${INJ_HOME_DIR} 下的日志。" >&2
     return 1
   fi
 
@@ -655,7 +655,7 @@ PEGGO_TENDERMINT_RPC="http://127.0.0.1:26657"
 PEGGO_COSMOS_FEE_DENOM="inj"
 PEGGO_COSMOS_GAS_PRICES="1600000000inj"
 PEGGO_COSMOS_KEYRING="file"
-PEGGO_COSMOS_KEYRING_DIR="${INJHOME}"
+PEGGO_COSMOS_KEYRING_DIR="${INJ_HOME_DIR}"
 PEGGO_COSMOS_KEYRING_APP="injectived"
 PEGGO_COSMOS_FROM="genesis"
 PEGGO_COSMOS_FROM_PASSPHRASE="12345678"
@@ -756,7 +756,7 @@ restart_injective_and_peggo_only() {
 ########## 重置链并重新注册 orchestrator（显式确认后执行 unsafe-reset-all） ##########
 
 reset_chain_and_reregister_orchestrator() {
-  echo "[reset] 警告：该操作将对 ${INJHOME} 执行 unsafe-reset-all，重置本地链状态。" >&2
+  echo "[reset] 警告：该操作将对 ${INJ_HOME_DIR} 执行 unsafe-reset-all，重置本地链状态。" >&2
   echo "[reset] 这通常用于修复 genesis/state 不一致或 store 版本不匹配等严重错误。" >&2
   read -r -p "[reset] 确认继续吗？输入 y 继续，其他键取消 [y/N]: " ans
 
@@ -775,9 +775,9 @@ reset_chain_and_reregister_orchestrator() {
   fi
   pkill -f injectived 2>/dev/null || true
 
-  echo "[reset] 正在对 ${INJHOME} 执行 unsafe-reset-all --keep-addr-book..."
-  injectived tendermint unsafe-reset-all --keep-addr-book --home "${INJHOME}" || {
-    echo "[reset] 错误：unsafe-reset-all 执行失败，请手动检查链数据目录 ${INJHOME}" >&2
+  echo "[reset] 正在对 ${INJ_HOME_DIR} 执行 unsafe-reset-all --keep-addr-book..."
+  injectived tendermint unsafe-reset-all --keep-addr-book --home "${INJ_HOME_DIR}" || {
+    echo "[reset] 错误：unsafe-reset-all 执行失败，请手动检查链数据目录 ${INJ_HOME_DIR}" >&2
     return 1
   }
 
@@ -1189,42 +1189,28 @@ install_injective_binaries() {
   echo "[injective] peggo 版本: $(peggo version)"
 }
 
-########## 初始化 Injective 链（使用 injective-core 仓库中的 setup.sh） ##########
+########## 初始化 Injective 链（官方 setup.sh） ##########
 
 setup_injective_chain() {
-  echo "[chain] 开始执行 biya-coin/injective-core 仓库中的 setup.sh，chain-id=${INJ_CHAIN_ID}"
+  echo "[chain] 开始执行 Injective 官方节点初始化脚本，chain-id=${INJ_CHAIN_ID}"
 
+  echo "[injective] 下载官方 Injective 节点安装脚本"
   mkdir -p "$TMP_DIR"
+  curl -sSfL "$INJ_OFFICIAL_SETUP_URL" -o "$INJ_OFFICIAL_SETUP_SCRIPT"
+  chmod +x "$INJ_OFFICIAL_SETUP_SCRIPT"
 
-  # 统一在此处清理现有链数据目录，确保重新初始化
-  if [ -d "${INJHOME}" ]; then
-    echo "[chain] 检测到已有数据目录 ${INJHOME}，先删除后重新初始化"
-    rm -rf "${INJHOME}"
+  # 使用当前脚本配置的 INJ_CHAIN_ID 替换官方脚本中写死的 injective-1
+  # 这样可以通过修改本脚本顶部的 INJ_CHAIN_ID 来控制链 ID
+  if [ -n "${INJ_CHAIN_ID:-}" ]; then
+    echo "[injective] 使用 INJ_CHAIN_ID=${INJ_CHAIN_ID} 替换官方脚本中的默认链 ID injective-1"
+    sed -i "s/injective-1/${INJ_CHAIN_ID}/g" "$INJ_OFFICIAL_SETUP_SCRIPT" || true
   fi
 
-  # 确保 injective-core 源码目录存在
-  if [ ! -d "${INJECTIVE_CORE_DIR}" ]; then
-    echo "[chain] 未找到 ${INJECTIVE_CORE_DIR}，从 ${INJECTIVE_CORE_REPO} 重新克隆..."
-    git clone "${INJECTIVE_CORE_REPO}" "${INJECTIVE_CORE_DIR}"
-  fi
+  # 将期望的 chain-id 传递给官方脚本（官方脚本一般会从环境变量读取或交互配置）
+  INJ_CHAIN_ID_ENV="${INJ_CHAIN_ID}" INJ_HOME="${INJ_HOME_DIR}" \
+    "${INJ_OFFICIAL_SETUP_SCRIPT}"
 
-  # 为旧 setup.sh 配置环境变量：home 目录和链 ID
-  export INJHOME
-  export INJ_CHAIN_ID_ENV="${INJ_CHAIN_ID}"
-
-  (
-    cd "${INJECTIVE_CORE_DIR}" || exit 1
-    # 动态修改 injective-core/setup.sh 中的 CHAINID 定义，使其从环境变量 INJ_CHAIN_ID_ENV 读取
-    if grep -q 'CHAINID="injective-1"' ./setup.sh 2>/dev/null; then
-      sed -i 's/CHAINID="injective-1"/CHAINID="${INJ_CHAIN_ID_ENV:-injective-1}"/' ./setup.sh || true
-      echo "[chain] 已将 injective-core/setup.sh 中 CHAINID 改为从 INJ_CHAIN_ID_ENV 读取"
-    fi
-
-    chmod +x ./setup.sh
-    ./setup.sh
-  )
-
-  echo "[chain] injective-core/setup.sh 执行完成，开始读取创世地址"
+  echo "[chain] 官方 setup.sh 执行完成，开始读取创世地址"
 
   local genesis_inj_addr
   local genesis_evm_addr
