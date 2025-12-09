@@ -19,7 +19,7 @@ LIBWASMVM_VERSION="v1.16.1"
 # Ethereum / Sepolia 相关配置（可按需修改）
 ETH_NETWORK_NAME="sepolia"
 ETH_CHAIN_ID="11155111"
-ETH_RPC_URL="https://sepolia.infura.io/v3/7992c93ae01c402f806c5eec196f8c2b"
+ETH_RPC_URL="https://ethereum-sepolia.publicnode.com"
 ETH_PRIVATE_KEY="0x99f65f092924fd9c7cb8125255da54ca63733be861d5cdfdb570e41182100ba1"  # 不要提交真实私钥到仓库，此私钥为一次性私钥
 
 # 最小 ETH 余额（以 wei 为单位）
@@ -30,7 +30,7 @@ TARGET_ETH_BALANCE="100000000000000000"  # 0.1 ETH
 INJ_CHAIN_ID="injective-666"              # 官方 setup.sh 中使用的 chain-id，可按需修改
 INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
 INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
-INJ_OFFICIAL_SETUP_URL="https://raw.githubusercontent.com/InjectiveLabs/injective-chain-releases/master/scripts/setup.sh"
+INJ_OFFICIAL_SETUP_URL="https://raw.githubusercontent.com/biya-coin/injective-core/dev/setup.sh"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
 
 RESET_GENESIS=""   # 运行时由交互函数决定是否重置 genesis
@@ -627,11 +627,19 @@ write_peggo_env() {
     tmp_export_file="$(mktemp)"
 
     echo "[peggo] 现在将前台执行 'injectived keys unsafe-export-eth-key genesis'，请根据提示输入密码..."
-    echo "[peggo] 默认情况下，两次输入的密码都是 12345678（除非你在创建 genesis 账户时修改过）"
-    injectived keys unsafe-export-eth-key genesis | tee "$tmp_export_file"
+    echo "[peggo] 自动输入默认密码 (using expect)..."
+    /usr/bin/expect <<EOF > "$tmp_export_file"
+spawn injectived keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
+expect "Enter key password:"
+send "12345678\r"
+expect "Enter keyring passphrase"
+send "12345678\r"
+expect eof
+EOF
+
 
     if [ -s "$tmp_export_file" ]; then
-      exported_genesis_eth_pk="$(tail -n1 "$tmp_export_file" | tr -d '\n' | xargs)"
+      exported_genesis_eth_pk="$(grep -oE '[0-9a-fA-F]{64}' "$tmp_export_file" | tail -n1)"
     fi
     rm -f "$tmp_export_file"
   else
@@ -1189,28 +1197,96 @@ install_injective_binaries() {
   echo "[injective] peggo 版本: $(peggo version)"
 }
 
+########## 更新/同步 injective-core 仓库到 dev 分支 ##########
+
+update_and_sync_injective_core() {
+  local SCRIPT_DIR
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # 假设脚本在 QuickStartScript/ 下
+  local PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+  local LOCAL_CORE_DIR="${PROJECT_ROOT}/injective-core"
+
+  echo "[repo] 正在检查本地 injective-core 仓库: ${LOCAL_CORE_DIR}"
+
+  if [ -d "$LOCAL_CORE_DIR" ]; then
+    echo "[repo] 本地仓库存在，正在切换到 dev 分支并强制同步..."
+    (
+      cd "$LOCAL_CORE_DIR"
+      # 如果不是 git 仓库，可能需要报错或重新 clone (这里假设是 git 仓库)
+      if [ -d ".git" ]; then
+        git fetch origin dev
+        git checkout dev
+        git reset --hard origin/dev
+        echo "[repo] 已更新本地仓库到 origin/dev"
+      else
+        echo "[repo] 警告: ${LOCAL_CORE_DIR} 存在但不是 git 仓库，尝试重新克隆..."
+        cd ..
+        rm -rf "injective-core"
+        git clone -b dev "${INJECTIVE_CORE_REPO}" "injective-core"
+      fi
+    )
+  else
+    echo "[repo] 本地仓库不存在，正在克隆 dev 分支..."
+    (
+      cd "$PROJECT_ROOT"
+      git clone -b dev "${INJECTIVE_CORE_REPO}" "injective-core"
+    )
+  fi
+}
+
 ########## 初始化 Injective 链（官方 setup.sh） ##########
 
 setup_injective_chain() {
-  echo "[chain] 开始执行 Injective 官方节点初始化脚本，chain-id=${INJ_CHAIN_ID}"
+  # 确保本地代码是最新的 dev 分支
+  update_and_sync_injective_core
 
-  echo "[injective] 下载官方 Injective 节点安装脚本"
-  mkdir -p "$TMP_DIR"
-  curl -sSfL "$INJ_OFFICIAL_SETUP_URL" -o "$INJ_OFFICIAL_SETUP_SCRIPT"
-  chmod +x "$INJ_OFFICIAL_SETUP_SCRIPT"
+  echo "[chain] 开始执行 Injective 节点初始化，chain-id=${INJ_CHAIN_ID}"
 
-  # 使用当前脚本配置的 INJ_CHAIN_ID 替换官方脚本中写死的 injective-1
-  # 这样可以通过修改本脚本顶部的 INJ_CHAIN_ID 来控制链 ID
-  if [ -n "${INJ_CHAIN_ID:-}" ]; then
-    echo "[injective] 使用 INJ_CHAIN_ID=${INJ_CHAIN_ID} 替换官方脚本中的默认链 ID injective-1"
-    sed -i "s/injective-1/${INJ_CHAIN_ID}/g" "$INJ_OFFICIAL_SETUP_SCRIPT" || true
+  # 1) 定位本地 injective-core/setup.sh
+  local SCRIPT_DIR
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+  local LOCAL_CORE_DIR="${PROJECT_ROOT}/injective-core"
+  local LOCAL_SETUP_SCRIPT="${LOCAL_CORE_DIR}/setup.sh"
+
+  if [ -f "$LOCAL_SETUP_SCRIPT" ]; then
+    echo "[chain] 检测到本地配置脚本: ${LOCAL_SETUP_SCRIPT}"
+    echo "[chain] 将使用本地脚本 (包含自定义 genesis/markets 配置)"
+
+    chmod +x "$LOCAL_SETUP_SCRIPT"
+
+    # 2) 如果配置了自定义 Chain ID，则像处理官方脚本一样 patch 本地脚本
+    if [ -n "${INJ_CHAIN_ID:-}" ]; then
+      echo "[injective] 使用 INJ_CHAIN_ID=${INJ_CHAIN_ID} 更新本地脚本中的默认链 ID"
+      # Linux sed uses -i directly
+      sed -i "s/CHAINID=\"injective-1\"/CHAINID=\"${INJ_CHAIN_ID}\"/g" "$LOCAL_SETUP_SCRIPT" || true
+    fi
+
+    echo "[chain] 切换到 ${LOCAL_CORE_DIR} 并执行 setup.sh..."
+    # 3) 必须在 LOCAL_CORE_DIR 目录下执行，因为 setup.sh 内部使用相对路径 ./scripts/local-genesis
+    (
+      cd "$LOCAL_CORE_DIR"
+      # 传递 INJHOME 给 setup.sh (它会优先使用环境变量)
+      INJHOME="${INJ_HOME_DIR}" ./setup.sh
+    )
+
+  else
+    # Fallback to original logic
+    echo "[injective] 未找到本地脚本 (${LOCAL_SETUP_SCRIPT})，回退到下载官方脚本"
+    mkdir -p "$TMP_DIR"
+    curl -sSfL "$INJ_OFFICIAL_SETUP_URL" -o "$INJ_OFFICIAL_SETUP_SCRIPT"
+    chmod +x "$INJ_OFFICIAL_SETUP_SCRIPT"
+
+    if [ -n "${INJ_CHAIN_ID:-}" ]; then
+      echo "[injective] 使用 INJ_CHAIN_ID=${INJ_CHAIN_ID} 替换官方脚本中的默认链 ID injective-1"
+      sed -i "s/injective-1/${INJ_CHAIN_ID}/g" "$INJ_OFFICIAL_SETUP_SCRIPT" || true
+    fi
+
+    INJ_CHAIN_ID_ENV="${INJ_CHAIN_ID}" INJ_HOME="${INJ_HOME_DIR}" \
+      "${INJ_OFFICIAL_SETUP_SCRIPT}"
   fi
 
-  # 将期望的 chain-id 传递给官方脚本（官方脚本一般会从环境变量读取或交互配置）
-  INJ_CHAIN_ID_ENV="${INJ_CHAIN_ID}" INJ_HOME="${INJ_HOME_DIR}" \
-    "${INJ_OFFICIAL_SETUP_SCRIPT}"
-
-  echo "[chain] 官方 setup.sh 执行完成，开始读取创世地址"
+  echo "[chain] setup.sh 执行完成，开始读取创世地址"
 
   local genesis_inj_addr
   local genesis_evm_addr
@@ -1300,7 +1376,8 @@ install_etherman() {
 get_genesis_injective_address() {
   local inj_addr
   # 某些环境下读取 genesis 地址会要求输入密钥密码，这里默认使用 12345678 自动输入
-  inj_addr="$(printf '12345678\n' | injectived keys show genesis -a 2>/dev/null || true)"
+  inj_addr="$(printf '12345678\n' | injectived keys show genesis -a --home "${INJ_HOME_DIR}" --keyring-backend file 2>&1 || true)"
+
 
   if [ -z "$inj_addr" ]; then
     echo "[chain] 错误: 无法通过 'injectived keys show genesis -a' 获取创世地址" >&2
