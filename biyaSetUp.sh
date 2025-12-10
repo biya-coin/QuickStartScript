@@ -30,7 +30,6 @@ TARGET_ETH_BALANCE="100000000000000000"  # 0.1 ETH
 INJ_CHAIN_ID="injective-666"              # 官方 setup.sh 中使用的 chain-id，可按需修改
 INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
 INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
-INJ_OFFICIAL_SETUP_URL="https://raw.githubusercontent.com/biya-coin/injective-core/dev/setup.sh"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
 
 RESET_GENESIS=""   # 运行时由交互函数决定是否重置 genesis
@@ -54,6 +53,45 @@ PEGGY_DEPLOYER_FROM_PK="${ETH_PRIVATE_KEY}"
 # 使用 biya-coin 的仓库
 INJECTIVE_CORE_REPO="https://github.com/biya-coin/injective-core.git"
 INJECTIVE_CORE_DIR="${TMP_DIR}/injective-core-src"
+
+###################### 新增：仅本地编译部署重启（使用 /tmp/injective-release/injective-core-src） ######################
+
+local_rebuild_and_restart_from_tmp() {
+  echo "[local] 仅本地编译部署重启模式 (使用 ${INJECTIVE_CORE_DIR})"
+
+  if [ ! -d "${INJECTIVE_CORE_DIR}" ]; then
+    echo "[local] 错误: 未找到本地源码目录 ${INJECTIVE_CORE_DIR}，请先运行完整初始化流程 (clone injective-core)" >&2
+    return 1
+  fi
+
+  (
+    cd "${INJECTIVE_CORE_DIR}" || {
+      echo "[local] 错误: 无法进入目录 ${INJECTIVE_CORE_DIR}" >&2
+      return 1
+    }
+
+    echo "[local] 在 ${INJECTIVE_CORE_DIR} 中执行 go mod tidy..."
+    go mod tidy
+
+    echo "[local] 在 ${INJECTIVE_CORE_DIR} 中执行 make install..."
+    make install
+  )
+
+  echo "[local] 停止现有 inj / peggo / tmux 会话 (不删除数据目录)"
+  if command_exists tmux; then
+    tmux kill-session -t inj 2>/dev/null || true
+    tmux kill-session -t orchestrator 2>/dev/null || true
+  fi
+  pkill -f injectived 2>/dev/null || true
+  pkill -f peggo 2>/dev/null || true
+
+  echo "[local] 使用新编译的二进制重启节点和 peggo（复用现有链数据，不触发 setup.sh/genesis 重置）"
+  start_injective_node
+  check_injective_health_or_fix || echo "[local] 警告: 节点健康检查失败，请手动检查日志" >&2
+  start_peggo_orchestrator
+
+  echo "[local] 本地编译部署重启完成"
+}
 
 UNAME_OUT="$(uname -s)"
 case "${UNAME_OUT}" in
@@ -542,8 +580,8 @@ start_injective_node() {
       --log-level info \
       --api.address tcp://0.0.0.0:10337 \
       --grpc.address 0.0.0.0:9900 \
-      --json-rpc.address 0.0.0.0:8545 \
-      --json-rpc.ws-address 0.0.0.0:8546 \
+      --json-rpc.address 0.0.0.0:8546 \
+      --json-rpc.ws-address 0.0.0.0:8547 \
       --json-rpc.api 'eth,web3,net,txpool,debug,personal,inj' \
       --json-rpc.enable=true \
       --json-rpc.allow-unprotected-txs=true \
@@ -1305,19 +1343,8 @@ setup_injective_chain() {
     )
 
   else
-    # Fallback to original logic
-    echo "[injective] 未找到本地脚本 (${LOCAL_SETUP_SCRIPT})，回退到下载官方脚本"
-    mkdir -p "$TMP_DIR"
-    curl -sSfL "$INJ_OFFICIAL_SETUP_URL" -o "$INJ_OFFICIAL_SETUP_SCRIPT"
-    chmod +x "$INJ_OFFICIAL_SETUP_SCRIPT"
-
-    if [ -n "${INJ_CHAIN_ID:-}" ]; then
-      echo "[injective] 使用 INJ_CHAIN_ID=${INJ_CHAIN_ID} 替换官方脚本中的默认链 ID injective-1"
-      sed -i "s/injective-1/${INJ_CHAIN_ID}/g" "$INJ_OFFICIAL_SETUP_SCRIPT" || true
-    fi
-
-    INJ_CHAIN_ID_ENV="${INJ_CHAIN_ID}" INJ_HOME="${INJ_HOME_DIR}" \
-      "${INJ_OFFICIAL_SETUP_SCRIPT}"
+    echo "[injective] 错误: 未找到本地 setup.sh (${LOCAL_SETUP_SCRIPT})，请先在本机 clone injective-core 仓库并确保存在 setup.sh" >&2
+    exit 1
   fi
 
   echo "[chain] setup.sh 执行完成，开始读取创世地址"
@@ -1663,11 +1690,12 @@ main() {
   echo "2 - 从重置 genesis 到跨链桥启动的完整流程"
   # echo "3 - 从合约部署到跨链桥启动的完整流程（暂时禁用）"
   echo "3 - 仅配置 peggo (.env)"
-  echo "4 - 只编译安装 injectived 和 peggo 并重启节点和bridge"
+  echo "4 - 只从github下载源码编译安装 injectived 和 peggo 并重启节点和bridge"
   echo "5 - 仅重启 Injective 节点和 peggo（不重新编译、不重新部署）"
-  # echo "6 - 重置链并重新注册 orchestrator（unsafe-reset-all + 重启节点，仅在需要时使用）"
+  echo "6 - 本地源码编译并重启（/tmp/injective-release/injective-core-src）"
+  # echo "7 - 重置链并重新注册 orchestrator（unsafe-reset-all + 重启节点，仅在需要时使用）"
 
-  read -r -p "请输入选择 [1/2/3/4/5] (默认 4): " choice
+  read -r -p "请输入选择 [1/2/3/4/5/6] (默认 5): " choice
 
   case "$choice" in
     1)
@@ -1685,8 +1713,11 @@ main() {
     5)
       restart_injective_and_peggo_only
       ;;
+    6)
+      local_rebuild_and_restart_from_tmp
+      ;;
     *)
-      run_build_and_restart_only
+      restart_injective_and_peggo_only
       ;;
   esac
 
