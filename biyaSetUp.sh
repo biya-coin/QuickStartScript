@@ -540,7 +540,7 @@ start_injective_node() {
 
     tmux new -s inj -d "injectived \
       --log-level info \
-      --api.address tcp://0.0.0.0:26657 \
+      --api.address tcp://0.0.0.0:10337 \
       --grpc.address 0.0.0.0:9900 \
       --json-rpc.address 0.0.0.0:8545 \
       --json-rpc.ws-address 0.0.0.0:8546 \
