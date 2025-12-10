@@ -1210,7 +1210,29 @@ setup_injective_chain() {
   INJ_CHAIN_ID_ENV="${INJ_CHAIN_ID}" INJ_HOME="${INJ_HOME_DIR}" \
     "${INJ_OFFICIAL_SETUP_SCRIPT}"
 
-  echo "[chain] 官方 setup.sh 执行完成，开始读取创世地址"
+  echo "[chain] 官方 setup.sh 执行完成，开始调整 genesis 配置并读取创世地址"
+
+  # 官方脚本生成的 genesis.json 中，gov 模块的 params.min_deposit 默认 denom 通常为 "stake"
+  # 这里仅将 .app_state.gov.params.min_deposit[0].denom 修改为 "inj"，保持 amount 与其它结构不变
+  if [ -f "${INJ_GENESIS_PATH}" ]; then
+    ensure_jq || true
+    if command_exists jq; then
+      echo "[genesis] 将 gov.params.min_deposit[0].denom 从 stake 修改为 inj (${INJ_GENESIS_PATH})"
+      jq '
+        if .app_state.gov.params.min_deposit
+           and (.app_state.gov.params.min_deposit | length) > 0
+           and .app_state.gov.params.min_deposit[0].denom == "stake" then
+          .app_state.gov.params.min_deposit[0].denom = "inj"
+        else
+          .
+        end
+      ' "${INJ_GENESIS_PATH}" > "${INJ_GENESIS_PATH}.tmp" && mv "${INJ_GENESIS_PATH}.tmp" "${INJ_GENESIS_PATH}" || echo "[genesis] 警告: 更新 genesis min_deposit denom 失败，请手动检查 ${INJ_GENESIS_PATH}" >&2
+    else
+      echo "[genesis] 警告: 未安装 jq，跳过修改 genesis 中的 min_deposit denom" >&2
+    fi
+  else
+    echo "[genesis] 警告: 未找到 genesis.json (${INJ_GENESIS_PATH})，无法修改 min_deposit denom" >&2
+  fi
 
   local genesis_inj_addr
   local genesis_evm_addr
