@@ -32,6 +32,12 @@ INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
 INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
 
+# 统一端口配置（避免 injectived 与 peggo 配置不一致导致“连接超时”）
+# - 关键：peggo 需要连接 injectived 的 gRPC 端口；之前脚本 injectived 使用 9900，但 ~/.peggo/.env 写死 9090，导致 peggo 无法启动。
+# - 这里统一使用 9090（cosmos-sdk 常见默认值），并让两处都引用同一配置。
+INJ_GRPC_PORT="${INJ_GRPC_PORT:-9900}"
+INJ_GRPC_ADDR="${INJ_GRPC_ADDR:-0.0.0.0:${INJ_GRPC_PORT}}"
+
 RESET_GENESIS=""   # 运行时由交互函数决定是否重置 genesis
 
 # EVM / EIP-155 配置
@@ -60,6 +66,11 @@ CHAINSTREAM_PUBLISHER_BUFFER_CAP="${CHAINSTREAM_PUBLISHER_BUFFER_CAP:-1000}"
 PEGGY_DEPLOYER_RPC_URI="${ETH_RPC_URL}"
 PEGGY_DEPLOYER_TX_GAS_PRICE="-1"       # -1 表示由部署脚本自行估算 gas price
 PEGGY_DEPLOYER_TX_GAS_LIMIT="8000000"  # 提高默认 gas limit，避免合约部署时 out of gas
+# etherman 默认 tx-timeout=30s，在 Sepolia 上经常不够用（会出现 `level=fatal msg="await timeout"`）
+# 这里将 timeout 做成可配置并提供更安全的默认值
+PEGGY_DEPLOYER_RPC_TIMEOUT="${PEGGY_DEPLOYER_RPC_TIMEOUT:-30s}"
+PEGGY_DEPLOYER_TX_TIMEOUT="${PEGGY_DEPLOYER_TX_TIMEOUT:-300s}"
+PEGGY_DEPLOYER_CALL_TIMEOUT="${PEGGY_DEPLOYER_CALL_TIMEOUT:-30s}"
 PEGGY_DEPLOYER_FROM=""              # 部署者地址，可选
 PEGGY_DEPLOYER_FROM_PK="${ETH_PRIVATE_KEY}"
 
@@ -741,8 +752,9 @@ start_injective_node() {
 
     tmux new -s inj -d "injectived \
       --log-level info \
+      --rpc.laddr tcp://0.0.0.0:26657 \
       --api.address tcp://0.0.0.0:10337 \
-      --grpc.address 0.0.0.0:9900 \
+      --grpc.address ${INJ_GRPC_ADDR} \
       --json-rpc.address 0.0.0.0:8546 \
       --json-rpc.ws-address 0.0.0.0:8547 \
       --json-rpc.api 'eth,web3,net,txpool,debug,personal,inj' \
@@ -756,6 +768,7 @@ start_injective_node() {
       --home ${INJ_HOME_DIR} \
       start 2>&1 | tee -a ./logs/inj.log"
     echo "[injective] 已在 tmux 会话 inj 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/inj.log"
+    echo "[injective] gRPC 监听地址: ${INJ_GRPC_ADDR}（peggo 将使用该端口连接）"
   )
 }
 
@@ -886,7 +899,7 @@ PEGGO_ENV="local"
 PEGGO_LOG_LEVEL="info"
 
 PEGGO_COSMOS_CHAIN_ID="${INJ_CHAIN_ID}"
-PEGGO_COSMOS_GRPC="tcp://localhost:9090"
+PEGGO_COSMOS_GRPC="tcp://127.0.0.1:${INJ_GRPC_PORT}"
 PEGGO_TENDERMINT_RPC="http://127.0.0.1:26657"
 
 PEGGO_COSMOS_FEE_DENOM="inj"
@@ -896,7 +909,11 @@ PEGGO_COSMOS_KEYRING_DIR="${INJ_HOME_DIR}"
 PEGGO_COSMOS_KEYRING_APP="injectived"
 PEGGO_COSMOS_FROM="genesis"
 PEGGO_COSMOS_FROM_PASSPHRASE="12345678"
-PEGGO_COSMOS_PK="${exported_genesis_eth_pk}"
+# 注意：PEGGO_COSMOS_PK 是“直接提供 cosmos 私钥”的测试选项（peggo 会优先使用它并忽略 keyring）。
+# 之前脚本误把“genesis 的 EVM 私钥”写到 PEGGO_COSMOS_PK，导致 peggo 使用了错误账户地址并报：
+#   account <addr> not found
+# 因此这里默认留空，统一使用 injectived 的 keyring 中的 genesis 账户。
+PEGGO_COSMOS_PK=""
 
 PEGGO_COSMOS_USE_LEDGER="false"
 
@@ -933,7 +950,9 @@ PEGGO_ETH_PERSONAL_SIGN="false"
 PEGGO_ETH_SIGN_MODE="raw"
 EOF
 
-  echo "[peggo] 已生成 ${peggo_env_file}，请根据需要检查和调整 ETH_RPC / WSS 等字段。"
+  echo "[peggo] 已生成 ${peggo_env_file}"
+  echo "[peggo] peggo 将连接 injectived gRPC: tcp://127.0.0.1:${INJ_GRPC_PORT}"
+  echo "[peggo] 请根据需要检查和调整 ETH_RPC / WSS 等字段。"
 }
 
 ########## 启动 peggo orchestrator（tmux + 日志） ##########
@@ -963,7 +982,9 @@ start_peggo_orchestrator() {
       tmux kill-session -t orchestrator || true
     fi
 
-    tmux new -s orchestrator -d "peggo orchestrator 2>&1 | tee -a ./logs/orchestrator.log"
+    # 重要：peggo 在读取 keyring-file 时会提示输入 passphrase；在 tmux/非交互环境里经常会卡住。
+    # 这里用 `yes "$PASS"` 持续向 stdin 喂入 passphrase，确保 peggo 不会阻塞在交互输入。
+    tmux new -s orchestrator -d "bash -lc 'cd \"${peggo_home}\" && set -a && [ -f .env ] && source .env || true; set +a; PASS=\"\${PEGGO_COSMOS_FROM_PASSPHRASE:-12345678}\"; yes \"\${PASS}\" | exec peggo orchestrator' 2>&1 | tee -a ./logs/orchestrator.log"
     echo "[peggo] 已在 tmux 会话 orchestrator 中启动 peggo orchestrator，日志: ${peggo_logs_dir}/orchestrator.log"
   )
 }
@@ -1700,6 +1721,17 @@ deploy_peggy_contract() {
     -e "s|^DEPLOYER_FROM=.*|DEPLOYER_FROM=\"${PEGGY_DEPLOYER_FROM}\"|" \
     -e "s|^DEPLOYER_FROM_PK=.*|DEPLOYER_FROM_PK=\"${PEGGY_DEPLOYER_FROM_PK}\"|" \
     .env
+
+  # .env.example 里可能没有 timeout 字段，缺失时追加，避免 etherman 使用 30s 默认导致 await timeout
+  if ! grep -q '^DEPLOYER_RPC_TIMEOUT=' .env; then
+    echo "DEPLOYER_RPC_TIMEOUT=\"${PEGGY_DEPLOYER_RPC_TIMEOUT}\"" >> .env
+  fi
+  if ! grep -q '^DEPLOYER_TX_TIMEOUT=' .env; then
+    echo "DEPLOYER_TX_TIMEOUT=\"${PEGGY_DEPLOYER_TX_TIMEOUT}\"" >> .env
+  fi
+  if ! grep -q '^DEPLOYER_CALL_TIMEOUT=' .env; then
+    echo "DEPLOYER_CALL_TIMEOUT=\"${PEGGY_DEPLOYER_CALL_TIMEOUT}\"" >> .env
+  fi
 
   echo "[peggy] 执行 deploy-on-evm.sh 进行合约部署"
   chmod +x ./deploy-on-evm.sh
