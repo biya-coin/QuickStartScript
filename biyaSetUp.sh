@@ -32,7 +32,26 @@ INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
 INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
 
+# 统一端口配置（避免 injectived 与 peggo 配置不一致导致“连接超时”）
+# - 关键：peggo 需要连接 injectived 的 gRPC 端口；之前脚本 injectived 使用 9900，但 ~/.peggo/.env 写死 9090，导致 peggo 无法启动。
+# - 这里统一使用 9090（cosmos-sdk 常见默认值），并让两处都引用同一配置。
+INJ_GRPC_PORT="${INJ_GRPC_PORT:-9900}"
+INJ_GRPC_ADDR="${INJ_GRPC_ADDR:-0.0.0.0:${INJ_GRPC_PORT}}"
+
 RESET_GENESIS=""   # 运行时由交互函数决定是否重置 genesis
+
+# EVM / EIP-155 配置
+# 注意：Injective EVM 模块 genesis 中该字段通常为 `.app_state.evm.params.chain_config.eip155ChainID`
+# 这里统一改为 666（字符串形式，兼容 sdkmath.Int 的 JSON 表示）
+EVM_EIP155_CHAIN_ID="666"
+
+# 初始化创建市场时需要补齐 denom 对应的 decimals（写入 genesis: app_state.exchange.denom_decimals）
+# 说明：
+# - 若你创建了自定义市场/自定义 denom，但上游 setup.sh 没有包含该 denom 的 decimals，会导致市场相关计算/显示异常
+# - 通过该变量可在初始化后追加/覆盖 decimals（最后写入优先）
+# 格式：JSON 数组，例如：
+#   EXTRA_DENOM_DECIMALS_JSON='[{"denom":"inj","decimals":"18"},{"denom":"factory/xxx/yyy","decimals":"6"}]'
+EXTRA_DENOM_DECIMALS_JSON="${EXTRA_DENOM_DECIMALS_JSON:-[]}"
 
 # Peggy 合约部署参数（覆盖 deploy-on-evm.sh 默认值）
 PEGGY_POWER_THRESHOLD="100"
@@ -47,6 +66,11 @@ CHAINSTREAM_PUBLISHER_BUFFER_CAP="${CHAINSTREAM_PUBLISHER_BUFFER_CAP:-1000}"
 PEGGY_DEPLOYER_RPC_URI="${ETH_RPC_URL}"
 PEGGY_DEPLOYER_TX_GAS_PRICE="-1"       # -1 表示由部署脚本自行估算 gas price
 PEGGY_DEPLOYER_TX_GAS_LIMIT="8000000"  # 提高默认 gas limit，避免合约部署时 out of gas
+# etherman 默认 tx-timeout=30s，在 Sepolia 上经常不够用（会出现 `level=fatal msg="await timeout"`）
+# 这里将 timeout 做成可配置并提供更安全的默认值
+PEGGY_DEPLOYER_RPC_TIMEOUT="${PEGGY_DEPLOYER_RPC_TIMEOUT:-30s}"
+PEGGY_DEPLOYER_TX_TIMEOUT="${PEGGY_DEPLOYER_TX_TIMEOUT:-300s}"
+PEGGY_DEPLOYER_CALL_TIMEOUT="${PEGGY_DEPLOYER_CALL_TIMEOUT:-30s}"
 PEGGY_DEPLOYER_FROM=""              # 部署者地址，可选
 PEGGY_DEPLOYER_FROM_PK="${ETH_PRIVATE_KEY}"
 
@@ -397,6 +421,156 @@ ensure_jq() {
   fi
 }
 
+########## 补丁：设置 genesis 中 EVM 的 eip155ChainID ##########
+
+patch_genesis_eip155_chain_id() {
+  local genesis="$INJ_GENESIS_PATH"
+  local target="${EVM_EIP155_CHAIN_ID:-}"
+
+  if [ -z "$target" ]; then
+    echo "[evm] 警告: EVM_EIP155_CHAIN_ID 为空，跳过 eip155ChainID 设置" >&2
+    return 0
+  fi
+
+  if [ ! -f "$genesis" ]; then
+    echo "[evm] 警告: 未找到 genesis.json (${genesis})，跳过 eip155ChainID 设置" >&2
+    return 0
+  fi
+
+  ensure_jq || return 1
+
+  # 仅在存在 evm.params.chain_config 时写入，避免在不含 EVM 模块的 genesis 上强行造字段
+  if ! jq -e '.app_state.evm.params.chain_config? != null' "$genesis" >/dev/null 2>&1; then
+    echo "[evm] 警告: genesis 中未检测到 .app_state.evm.params.chain_config，跳过 eip155ChainID 设置" >&2
+    return 0
+  fi
+
+  # 重要：当前 injectived 的 genesis JSON 解析对字段名非常严格。
+  # 实测 `.app_state.evm.params.chain_config.eip155_chain_id` (snake_case) 是可识别字段；
+  # 而 `eip155ChainID` 会导致 panic: unknown field "eip155ChainID" in types.ChainConfig。
+  # 因此这里统一：
+  # 1) 强制删除可能存在的 camelCase 字段（避免启动时报错）
+  # 2) 仅写入 snake_case 的 eip155_chain_id
+  echo "[evm] 设置 genesis EIP155 chain id (eip155_chain_id): ${target}"
+  jq --arg id "$target" '
+    .app_state.evm.params.chain_config |= (
+      .
+      | del(.eip155ChainID)
+      | del(.eip155ChainId)
+      | .eip155_chain_id = $id
+    )
+  ' "$genesis" > "${genesis}.tmp" && mv "${genesis}.tmp" "$genesis"
+}
+
+########## 补丁：补齐/覆盖 exchange.denom_decimals（用于市场 decimals） ##########
+
+patch_exchange_denom_decimals() {
+  local genesis="$INJ_GENESIS_PATH"
+  local extra="${EXTRA_DENOM_DECIMALS_JSON:-[]}"
+
+  if [ ! -f "$genesis" ]; then
+    echo "[genesis] 警告: 未找到 genesis.json (${genesis})，跳过 denom_decimals 补丁" >&2
+    return 0
+  fi
+
+  # extra 为空或默认 [] 时不做任何事
+  if [ -z "$extra" ] || [ "$extra" = "[]" ]; then
+    return 0
+  fi
+
+  ensure_jq || return 1
+
+  # 校验 JSON 格式必须为数组，避免 jq --argjson 报错导致脚本中断 
+  if ! echo "$extra" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "[genesis] 错误: EXTRA_DENOM_DECIMALS_JSON 不是合法 JSON 数组，值为: $extra" >&2
+    return 1
+  fi
+
+  echo "[genesis] 将合并/补齐 exchange.denom_decimals（最后写入优先）"
+  jq --argjson extra "$extra" '
+    .app_state.exchange.denom_decimals = (
+      (((.app_state.exchange.denom_decimals // []) + ($extra // []))
+        | reverse
+        | unique_by(.denom)
+        | reverse)
+    )
+  ' "$genesis" > "${genesis}.tmp" && mv "${genesis}.tmp" "$genesis"
+}
+
+########## 补丁：为 exchange 的 markets 补齐 base/quote decimals ##########
+#
+# 背景：
+# - SpotMarket / DerivativeMarket 在 proto 中支持 decimals 字段，但本地 genesis 模板可能未显式写入
+# - 这会导致某些前端/工具在读取 genesis market 列表时拿不到 decimals
+#
+# 规则：
+# - spot_markets：补齐 base_decimals + quote_decimals（分别来自 base_denom / quote_denom）
+# - derivative_markets：仅补齐 quote_decimals（DerivativeMarket 无 base_denom，proto 也通常没有 base_decimals）
+# - decimals 来源：.app_state.exchange.denom_decimals（可被 EXTRA_DENOM_DECIMALS_JSON 补充/覆盖）
+#
+patch_exchange_markets_decimals() {
+  local genesis="$INJ_GENESIS_PATH"
+
+  if [ ! -f "$genesis" ]; then
+    echo "[genesis] 警告: 未找到 genesis.json (${genesis})，跳过 markets decimals 补丁" >&2
+    return 0
+  fi
+
+  ensure_jq || return 1
+
+  # 找出 markets 引用但 denom_decimals 未覆盖的 denom，给出提示（不强制失败，避免阻塞初始化）
+  local missing_denoms
+  missing_denoms="$(jq -r '
+    . as $g
+    | ($g.app_state.exchange.denom_decimals // []
+        | map(.denom | ascii_downcase)
+      ) as $known
+    | (
+        (
+          (($g.app_state.exchange.spot_markets // []) | map(.base_denom, .quote_denom))
+          + (($g.app_state.exchange.derivative_markets // []) | map(.quote_denom))
+        )
+        | map(select(. != null and . != "") | ascii_downcase)
+        | unique
+      ) as $used
+    | ($used | map(. as $d | select(($known | index($d)) == null))) | .[]
+  ' "$genesis" 2>/dev/null || true)"
+
+  if [ -n "$missing_denoms" ]; then
+    echo "[genesis] 警告: 下列 denom 在 markets 中被引用，但未在 exchange.denom_decimals 中找到对应 decimals（将导致对应 market decimals 可能为 0）:" >&2
+    echo "$missing_denoms" | sed 's/^/  - /' >&2
+    echo "[genesis] 建议：通过 EXTRA_DENOM_DECIMALS_JSON 补充这些 denom 的 decimals。" >&2
+  fi
+
+  echo "[genesis] 正在根据 exchange.denom_decimals 补齐 spot/derivative markets 的 decimals 字段..."
+  jq '
+    def dec_map:
+      (.app_state.exchange.denom_decimals // [])
+      | map({key: (.denom | ascii_downcase), value: (.decimals | tostring | tonumber)})
+      | from_entries;
+
+    (dec_map) as $m
+    | .app_state.exchange.spot_markets = (
+        (.app_state.exchange.spot_markets // [])
+        | map(
+            . as $sm
+            | ($m[($sm.base_denom | ascii_downcase)] // null) as $bd
+            | ($m[($sm.quote_denom | ascii_downcase)] // null) as $qd
+            | (if $bd != null then .base_decimals = $bd else . end)
+            | (if $qd != null then .quote_decimals = $qd else . end)
+          )
+      )
+    | .app_state.exchange.derivative_markets = (
+        (.app_state.exchange.derivative_markets // [])
+        | map(
+            . as $dm
+            | ($m[($dm.quote_denom | ascii_downcase)] // null) as $qd
+            | (if $qd != null then .quote_decimals = $qd else . end)
+          )
+      )
+  ' "$genesis" > "${genesis}.tmp" && mv "${genesis}.tmp" "$genesis"
+}
+
 ########## 更新 Injective genesis.json 的 Peggy 配置 ##########
 
 update_injective_genesis_with_peggy() {
@@ -578,8 +752,9 @@ start_injective_node() {
 
     tmux new -s inj -d "injectived \
       --log-level info \
+      --rpc.laddr tcp://0.0.0.0:26657 \
       --api.address tcp://0.0.0.0:10337 \
-      --grpc.address 0.0.0.0:9900 \
+      --grpc.address ${INJ_GRPC_ADDR} \
       --json-rpc.address 0.0.0.0:8546 \
       --json-rpc.ws-address 0.0.0.0:8547 \
       --json-rpc.api 'eth,web3,net,txpool,debug,personal,inj' \
@@ -593,6 +768,7 @@ start_injective_node() {
       --home ${INJ_HOME_DIR} \
       start 2>&1 | tee -a ./logs/inj.log"
     echo "[injective] 已在 tmux 会话 inj 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/inj.log"
+    echo "[injective] gRPC 监听地址: ${INJ_GRPC_ADDR}（peggo 将使用该端口连接）"
   )
 }
 
@@ -723,7 +899,7 @@ PEGGO_ENV="local"
 PEGGO_LOG_LEVEL="info"
 
 PEGGO_COSMOS_CHAIN_ID="${INJ_CHAIN_ID}"
-PEGGO_COSMOS_GRPC="tcp://localhost:9090"
+PEGGO_COSMOS_GRPC="tcp://127.0.0.1:${INJ_GRPC_PORT}"
 PEGGO_TENDERMINT_RPC="http://127.0.0.1:26657"
 
 PEGGO_COSMOS_FEE_DENOM="inj"
@@ -733,7 +909,11 @@ PEGGO_COSMOS_KEYRING_DIR="${INJ_HOME_DIR}"
 PEGGO_COSMOS_KEYRING_APP="injectived"
 PEGGO_COSMOS_FROM="genesis"
 PEGGO_COSMOS_FROM_PASSPHRASE="12345678"
-PEGGO_COSMOS_PK="${exported_genesis_eth_pk}"
+# 注意：PEGGO_COSMOS_PK 是“直接提供 cosmos 私钥”的测试选项（peggo 会优先使用它并忽略 keyring）。
+# 之前脚本误把“genesis 的 EVM 私钥”写到 PEGGO_COSMOS_PK，导致 peggo 使用了错误账户地址并报：
+#   account <addr> not found
+# 因此这里默认留空，统一使用 injectived 的 keyring 中的 genesis 账户。
+PEGGO_COSMOS_PK=""
 
 PEGGO_COSMOS_USE_LEDGER="false"
 
@@ -770,7 +950,9 @@ PEGGO_ETH_PERSONAL_SIGN="false"
 PEGGO_ETH_SIGN_MODE="raw"
 EOF
 
-  echo "[peggo] 已生成 ${peggo_env_file}，请根据需要检查和调整 ETH_RPC / WSS 等字段。"
+  echo "[peggo] 已生成 ${peggo_env_file}"
+  echo "[peggo] peggo 将连接 injectived gRPC: tcp://127.0.0.1:${INJ_GRPC_PORT}"
+  echo "[peggo] 请根据需要检查和调整 ETH_RPC / WSS 等字段。"
 }
 
 ########## 启动 peggo orchestrator（tmux + 日志） ##########
@@ -800,7 +982,9 @@ start_peggo_orchestrator() {
       tmux kill-session -t orchestrator || true
     fi
 
-    tmux new -s orchestrator -d "peggo orchestrator 2>&1 | tee -a ./logs/orchestrator.log"
+    # 重要：peggo 在读取 keyring-file 时会提示输入 passphrase；在 tmux/非交互环境里经常会卡住。
+    # 这里用 `yes "$PASS"` 持续向 stdin 喂入 passphrase，确保 peggo 不会阻塞在交互输入。
+    tmux new -s orchestrator -d "bash -lc 'cd \"${peggo_home}\" && set -a && [ -f .env ] && source .env || true; set +a; PASS=\"\${PEGGO_COSMOS_FROM_PASSPHRASE:-12345678}\"; yes \"\${PASS}\" | exec peggo orchestrator' 2>&1 | tee -a ./logs/orchestrator.log"
     echo "[peggo] 已在 tmux 会话 orchestrator 中启动 peggo orchestrator，日志: ${peggo_logs_dir}/orchestrator.log"
   )
 }
@@ -1347,6 +1531,11 @@ setup_injective_chain() {
     exit 1
   fi
 
+  # 初始化完成后：补齐 markets 需要的 decimals，并统一 EIP155 chain id
+  patch_exchange_denom_decimals
+  patch_exchange_markets_decimals
+  patch_genesis_eip155_chain_id
+
   echo "[chain] setup.sh 执行完成，开始读取创世地址"
 
   local genesis_inj_addr
@@ -1532,6 +1721,17 @@ deploy_peggy_contract() {
     -e "s|^DEPLOYER_FROM=.*|DEPLOYER_FROM=\"${PEGGY_DEPLOYER_FROM}\"|" \
     -e "s|^DEPLOYER_FROM_PK=.*|DEPLOYER_FROM_PK=\"${PEGGY_DEPLOYER_FROM_PK}\"|" \
     .env
+
+  # .env.example 里可能没有 timeout 字段，缺失时追加，避免 etherman 使用 30s 默认导致 await timeout
+  if ! grep -q '^DEPLOYER_RPC_TIMEOUT=' .env; then
+    echo "DEPLOYER_RPC_TIMEOUT=\"${PEGGY_DEPLOYER_RPC_TIMEOUT}\"" >> .env
+  fi
+  if ! grep -q '^DEPLOYER_TX_TIMEOUT=' .env; then
+    echo "DEPLOYER_TX_TIMEOUT=\"${PEGGY_DEPLOYER_TX_TIMEOUT}\"" >> .env
+  fi
+  if ! grep -q '^DEPLOYER_CALL_TIMEOUT=' .env; then
+    echo "DEPLOYER_CALL_TIMEOUT=\"${PEGGY_DEPLOYER_CALL_TIMEOUT}\"" >> .env
+  fi
 
   echo "[peggy] 执行 deploy-on-evm.sh 进行合约部署"
   chmod +x ./deploy-on-evm.sh
