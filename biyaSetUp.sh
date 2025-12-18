@@ -12,7 +12,7 @@ TMP_DIR="/tmp/injective-release"
 INJECTIVE_CORE_REPO="https://github.com/biya-coin/injective-core.git"
 
 # 固定 libwasmvm 版本
-LIBWASMVM_VERSION="v1.16.1"
+LIBWASMVM_VERSION="v2.1.5"
 
 
 # lucky meat time clip thank table ancient burden boil junk curtain benefit
