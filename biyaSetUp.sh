@@ -52,9 +52,9 @@ PEGGY_DEPLOYER_FROM_PK="${ETH_PRIVATE_KEY}"
 
 # 使用 biya-coin 的仓库
 INJECTIVE_CORE_REPO="https://github.com/biya-coin/injective-core.git"
-INJECTIVE_CORE_DIR="${TMP_DIR}/injective-core-src"
+INJECTIVE_CORE_DIR="${TMP_DIR}/injective-core"
 
-###################### 新增：仅本地编译部署重启（使用 /tmp/injective-release/injective-core-src） ######################
+###################### 新增：仅本地编译部署重启（使用 /tmp/injective-release/injective-core） ######################
 
 local_rebuild_and_restart_from_tmp() {
   echo "[local] 仅本地编译部署重启模式 (使用 ${INJECTIVE_CORE_DIR})"
@@ -1134,19 +1134,26 @@ install_injective_binaries() {
   # ========= 分支选择：先克隆到本地，再基于本地分支列表供用户选择 =========
   echo "[injective] 正在克隆 injective-core 仓库用于分支选择..."
 
-  local repo_src_dir="${TMP_DIR}/injective-core-src"
-  rm -rf "$repo_src_dir"
-  mkdir -p "$repo_src_dir"
-
-  if ! git clone "$INJECTIVE_CORE_REPO" "$repo_src_dir"; then
-    echo "错误: 无法克隆仓库，请检查网络连接和仓库URL: $INJECTIVE_CORE_REPO" >&2
-    return 1
+  mkdir -p "${TMP_DIR}"
+  if [ -d "${INJECTIVE_CORE_DIR}/.git" ]; then
+    cd "${INJECTIVE_CORE_DIR}" || {
+      echo "错误: 无法进入仓库目录 ${INJECTIVE_CORE_DIR}" >&2
+      return 1
+    }
+    git fetch --all --prune >/dev/null 2>&1 || true
+  else
+    rm -rf "${INJECTIVE_CORE_DIR}"
+    mkdir -p "${INJECTIVE_CORE_DIR}"
+    if ! git clone "$INJECTIVE_CORE_REPO" "${INJECTIVE_CORE_DIR}"; then
+      echo "错误: 无法克隆仓库，请检查网络连接和仓库URL: $INJECTIVE_CORE_REPO" >&2
+      return 1
+    fi
+    cd "${INJECTIVE_CORE_DIR}" || {
+      echo "错误: 无法进入仓库目录 ${INJECTIVE_CORE_DIR}" >&2
+      return 1
+    }
+    git fetch --all --prune >/dev/null 2>&1 || true
   fi
-
-  cd "$repo_src_dir" || {
-    echo "错误: 无法进入仓库目录 $repo_src_dir" >&2
-    return 1
-  }
 
   # 更新所有远程分支
   git fetch --all --prune >/dev/null 2>&1 || true
@@ -1266,11 +1273,7 @@ install_injective_binaries() {
 ########## 更新/同步 injective-core 仓库到 dev 分支 ##########
 
 update_and_sync_injective_core() {
-  local SCRIPT_DIR
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  # 假设脚本在 QuickStartScript/ 下
-  local PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-  local LOCAL_CORE_DIR="${PROJECT_ROOT}/injective-core"
+  local LOCAL_CORE_DIR="${INJECTIVE_CORE_DIR}"
 
   echo "[repo] 正在检查本地 injective-core 仓库: ${LOCAL_CORE_DIR}"
 
@@ -1286,16 +1289,15 @@ update_and_sync_injective_core() {
         echo "[repo] 已更新本地仓库到 origin/dev"
       else
         echo "[repo] 警告: ${LOCAL_CORE_DIR} 存在但不是 git 仓库，尝试重新克隆..."
-        cd ..
-        rm -rf "injective-core"
-        git clone -b dev "${INJECTIVE_CORE_REPO}" "injective-core"
+        rm -rf "${LOCAL_CORE_DIR}"
+        git clone -b dev "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
       fi
     )
   else
     echo "[repo] 本地仓库不存在，正在克隆 dev 分支..."
     (
-      cd "$PROJECT_ROOT"
-      git clone -b dev "${INJECTIVE_CORE_REPO}" "injective-core"
+      mkdir -p "${TMP_DIR}"
+      git clone -b dev "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
     )
   fi
 }
@@ -1315,10 +1317,7 @@ setup_injective_chain() {
   fi
 
   # 1) 定位本地 injective-core/setup.sh
-  local SCRIPT_DIR
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-  local LOCAL_CORE_DIR="${PROJECT_ROOT}/injective-core"
+  local LOCAL_CORE_DIR="${INJECTIVE_CORE_DIR}"
   local LOCAL_SETUP_SCRIPT="${LOCAL_CORE_DIR}/setup.sh"
 
   if [ -f "$LOCAL_SETUP_SCRIPT" ]; then
@@ -1692,7 +1691,7 @@ main() {
   echo "3 - 仅配置 peggo (.env)"
   echo "4 - 只从github下载源码编译安装 injectived 和 peggo 并重启节点和bridge"
   echo "5 - 仅重启 Injective 节点和 peggo（不重新编译、不重新部署）"
-  echo "6 - 本地源码编译并重启（/tmp/injective-release/injective-core-src）"
+  echo "6 - 本地源码编译并重启（/tmp/injective-release/injective-core）"
   # echo "7 - 重置链并重新注册 orchestrator（unsafe-reset-all + 重启节点，仅在需要时使用）"
 
   read -r -p "请输入选择 [1/2/3/4/5/6] (默认 5): " choice
@@ -1721,7 +1720,7 @@ main() {
       ;;
   esac
 
-  echo "[setup] 任务执行完成。如需查看 Peggy 部署日志，请检查：${TMP_DIR}/injective-core-src/peggo/solidity/deployment/deploy.log"
+  echo "[setup] 任务执行完成。如需查看 Peggy 部署日志，请检查：${INJECTIVE_CORE_DIR}/peggo/solidity/deployment/deploy.log"
 }
 
 main "$@"
