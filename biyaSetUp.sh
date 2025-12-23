@@ -19,7 +19,7 @@ LIBWASMVM_VERSION="v2.1.5"
 # Ethereum / Sepolia 相关配置（可按需修改）
 ETH_NETWORK_NAME="sepolia"
 ETH_CHAIN_ID="11155111"
-ETH_RPC_URL="https://ethereum-sepolia.publicnode.com"
+ETH_RPC_URL="https://sepolia.infura.io/v3/7992c93ae01c402f806c5eec196f8c2b"
 ETH_PRIVATE_KEY="0x99f65f092924fd9c7cb8125255da54ca63733be861d5cdfdb570e41182100ba1"  # 不要提交真实私钥到仓库，此私钥为一次性私钥
 
 # 最小 ETH 余额（以 wei 为单位）
@@ -1107,10 +1107,14 @@ install_injective_binaries() {
     curl -L https://foundry.paradigm.xyz | bash
     
     # 添加 foundry 到 PATH
-    if [ -f "${HOME}/.zshrc" ] && ! grep -q "foundry" "${HOME}/.zshrc"; then
-      echo 'export PATH="${PATH}:${HOME}/.foundry/bin"' >> "${HOME}/.zshrc"
-      export PATH="${PATH}:${HOME}/.foundry/bin"
-    fi
+    for rcfile in "${HOME}/.zshrc" "${HOME}/.bashrc" "${HOME}/.profile"; do
+      if [ -f "$rcfile" ] && ! grep -q "\.foundry/bin" "$rcfile" 2>/dev/null; then
+        echo 'export PATH="$PATH:$HOME/.foundry/bin"' >> "$rcfile"
+      fi
+    done
+    export PATH="$PATH:$HOME/.foundry/bin"
+    hash -r 2>/dev/null || true
+    source_shell_config || true
     
     # 如果 foundryup 已安装但不在 PATH 中
     if [ -f "${HOME}/.foundry/bin/foundryup" ]; then
@@ -1123,12 +1127,16 @@ install_injective_binaries() {
     fi
     
     # 验证安装
-    if ! command_exists cast; then
+    if ! command_exists cast && [ ! -x "${HOME}/.foundry/bin/cast" ]; then
       echo "错误: foundry 安装失败，请手动安装: https://book.getfoundry.sh/getting-started/installation" >&2
       exit 1
     fi
     
-    echo "[foundry] 安装完成: $(cast --version)"
+    if command_exists cast; then
+      echo "[foundry] 安装完成: $(cast --version)"
+    else
+      echo "[foundry] 安装完成: $(${HOME}/.foundry/bin/cast --version)"
+    fi
   fi
 
   # ========= 分支选择：先克隆到本地，再基于本地分支列表供用户选择 =========
