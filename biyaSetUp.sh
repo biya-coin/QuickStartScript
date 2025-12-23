@@ -723,7 +723,7 @@ PEGGO_ENV="local"
 PEGGO_LOG_LEVEL="info"
 
 PEGGO_COSMOS_CHAIN_ID="${INJ_CHAIN_ID}"
-PEGGO_COSMOS_GRPC="tcp://localhost:9090"
+PEGGO_COSMOS_GRPC="tcp://localhost:9900"
 PEGGO_TENDERMINT_RPC="http://127.0.0.1:26657"
 
 PEGGO_COSMOS_FEE_DENOM="inj"
@@ -1165,7 +1165,14 @@ install_injective_binaries() {
 
   while read -r branch; do
     # 示例: "  origin/dev" 或 "origin/master"
-    branch="${branch#* }"          # 去掉前面的空格和星号
+    branch="$(echo "$branch" | sed -e 's/^[*[:space:]]*//')"
+    case "$branch" in
+      origin/*)
+        ;;
+      *)
+        continue
+        ;;
+    esac
     branch="${branch#origin/}"    # 去掉 origin/
     [ -z "$branch" ] && continue
     # 去重: 如果已经在列表里，则跳过
@@ -1274,30 +1281,35 @@ install_injective_binaries() {
 
 update_and_sync_injective_core() {
   local LOCAL_CORE_DIR="${INJECTIVE_CORE_DIR}"
+  local target_branch="${INJ_BRANCH:-dev}"
 
   echo "[repo] 正在检查本地 injective-core 仓库: ${LOCAL_CORE_DIR}"
 
   if [ -d "$LOCAL_CORE_DIR" ]; then
-    echo "[repo] 本地仓库存在，正在切换到 dev 分支并强制同步..."
+    echo "[repo] 本地仓库存在，正在切换到 ${target_branch} 分支并强制同步..."
     (
       cd "$LOCAL_CORE_DIR"
       # 如果不是 git 仓库，可能需要报错或重新 clone (这里假设是 git 仓库)
       if [ -d ".git" ]; then
-        git fetch origin dev
-        git checkout dev
-        git reset --hard origin/dev
-        echo "[repo] 已更新本地仓库到 origin/dev"
+        git fetch origin "${target_branch}"
+        if git show-ref --verify --quiet "refs/heads/${target_branch}"; then
+          git checkout "${target_branch}"
+        else
+          git checkout -b "${target_branch}" "origin/${target_branch}"
+        fi
+        git reset --hard "origin/${target_branch}"
+        echo "[repo] 已更新本地仓库到 origin/${target_branch}"
       else
         echo "[repo] 警告: ${LOCAL_CORE_DIR} 存在但不是 git 仓库，尝试重新克隆..."
         rm -rf "${LOCAL_CORE_DIR}"
-        git clone -b dev "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
+        git clone -b "${target_branch}" "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
       fi
     )
   else
-    echo "[repo] 本地仓库不存在，正在克隆 dev 分支..."
+    echo "[repo] 本地仓库不存在，正在克隆 ${target_branch} 分支..."
     (
       mkdir -p "${TMP_DIR}"
-      git clone -b dev "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
+      git clone -b "${target_branch}" "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
     )
   fi
 }
@@ -1305,7 +1317,7 @@ update_and_sync_injective_core() {
 ########## 初始化 Injective 链（官方 setup.sh） ##########
 
 setup_injective_chain() {
-  # 确保本地代码是最新的 dev 分支
+  # 确保本地代码是最新的分支
   update_and_sync_injective_core
 
   echo "[chain] 开始执行 Injective 节点初始化，chain-id=${INJ_CHAIN_ID}"
