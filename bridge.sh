@@ -9,16 +9,16 @@ ETH_CHAIN_ID="${ETH_CHAIN_ID:-11155111}"
 ETH_PRIVATE_KEY="${ETH_PRIVATE_KEY:-0x99f65f092924fd9c7cb8125255da54ca63733be861d5cdfdb570e41182100ba1}"   # 用于在 Sepolia 上发交易的 EOA，初始有100W USDT
 
 # Peggy 桥相关（在 biyaSetUp.sh 部署 Peggy 后可从部署日志或 env 中获得）
-BRIDGE_CONTRACT_ADDRESS="${BRIDGE_CONTRACT_ADDRESS:-0x262b1A0d0C85a882344fb72603aB1893c1E83c81}"   # Peggy Bridge 合约地址
+BRIDGE_CONTRACT_ADDRESS="${BRIDGE_CONTRACT_ADDRESS:-0x7D0c22C427B960368b84f7A7523243dCaD0Cb15B}"   # Peggy Bridge 合约地址
 TOKEN_ADDRESS="${TOKEN_ADDRESS:-0x3de4027B5b0Bf278Db2D187768AC441e9B356360}"                         # USDT 代币地址（用于 deposit/withdraw）
 TOKEN_DECIMALS="${TOKEN_DECIMALS:-6}"                                 # 代币精度
 
-# Injective 相关
-INJ_NODE="${INJ_NODE:-http://127.0.0.1:26657}"                        # Injective RPC
-INJ_CHAIN_ID="${INJ_CHAIN_ID:-injective-666}"
+# biyachain 相关
+INJ_NODE="${INJ_NODE:-http://127.0.0.1:26657}"                        # biyachain RPC
+INJ_CHAIN_ID="${INJ_CHAIN_ID:-biyachain-1}"
 INJ_KEY_NAME="${INJ_KEY_NAME:-testOne}"                           # 本地 keyring 中的 key 名称
 INJ_KEYRING_BACKEND="${INJ_KEYRING_BACKEND:-test}"                    # 一般为 test
-DEFAULT_INJ_ADDR="${DEFAULT_INJ_ADDR:-inj1xxj66daehr3qutsauu5xkvkqajknjkrztlywev}"  # 默认 Injective 地址，用于 claimINJ 默认收款
+DEFAULT_INJ_ADDR="${DEFAULT_INJ_ADDR:-inj1xxj66daehr3qutsauu5xkvkqajknjkrztlywev}"  # 默认 biyachain 地址，用于 claimINJ 默认收款
 
 ########## 工具函数 ##########
 
@@ -86,7 +86,7 @@ ensure_tools() {
   fi
 }
 
-########## Injective 账户工具：为 ETH_PRIVATE_KEY 准备 Injective key ##########
+########## biyachain 账户工具：为 ETH_PRIVATE_KEY 准备 biyachain key ##########
 
 ensure_injective_key_for_eth() {
   # 默认 key 名称可通过环境变量覆盖
@@ -98,25 +98,25 @@ ensure_injective_key_for_eth() {
     return 1
   fi
 
-  log INFO "检查 Injective keyring(file) 中是否已存在 key '$key_name'..."
+  log INFO "检查 biyachain keyring(file) 中是否已存在 key '$key_name'..."
 
   # 不重定向输出，让用户看到可能的 passphrase 提示
   if injectived keys show "$key_name" --keyring-backend file; then
-    log INFO "检测到已存在的 Injective key '$key_name' (keyring-backend=file)，后续将使用该账户。"
+    log INFO "检测到已存在的 biyachain key '$key_name' (keyring-backend=file)，后续将使用该账户。"
     return 0
   fi
 
-  log INFO "未在 keyring(file) 中检测到 '$key_name'，将使用 ETH_PRIVATE_KEY 导入为 Injective eth-key。"
+  log INFO "未在 keyring(file) 中检测到 '$key_name'，将使用 ETH_PRIVATE_KEY 导入为 biyachain eth-key。"
   log INFO "接下来 injectived 会在前台提示设置/确认该 key 的密码，通常需要输入两次，默认建议使用 12345678（除非你有其他安全策略）。"
   log INFO "执行: injectived keys unsafe-import-eth-key $key_name <privateKey> --keyring-backend file"
 
   # 前台运行，由用户按提示输入密码，所有提示可见
   if ! injectived keys unsafe-import-eth-key "$key_name" "$ETH_PRIVATE_KEY" --keyring-backend file; then
-    log ERROR "unsafe-import-eth-key 失败，请检查 Injective 环境和私钥配置。"
+    log ERROR "unsafe-import-eth-key 失败，请检查 biyachain 环境和私钥配置。"
     return 1
   fi
 
-  log INFO "已成功导入 Injective key '$key_name'，后续 withdraw/claimINJ 将复用该账户。"
+  log INFO "已成功导入 biyachain key '$key_name'，后续 withdraw/claimINJ 将复用该账户。"
 }
 
 wei_from_amount_u() {
@@ -132,7 +132,7 @@ wei_from_amount_u() {
   echo "$amount_u * (10 ^ $decimals)" | bc
 }
 
-########## 地址转换工具：从 inj 推导 EVM 地址 ##########
+########## 地址转换工具：从 byb 推导 EVM 地址 ##########
 
 get_evm_address_from_inj() {
   local inj_addr="$1"
@@ -141,7 +141,7 @@ get_evm_address_from_inj() {
   hex="$(injectived debug addr "${inj_addr}" 2>/dev/null | awk '/Address \(hex\):/ {print $3}' || true)"
 
   if [ -z "$hex" ]; then
-    log ERROR "无法从 'injectived debug addr' 获取 EVM hex 地址 (inj=$inj_addr)"
+    log ERROR "无法从 'injectived debug addr' 获取 EVM hex 地址 (byb=$inj_addr)"
     return 1
   fi
 
@@ -151,7 +151,7 @@ get_evm_address_from_inj() {
 ########## 余额查询 ##########
 
 show_balances() {
-  log INFO "查询配置私钥对应地址在 Sepolia 和 Injective 上的余额..."
+  log INFO "查询配置私钥对应地址在 Sepolia 和 biyachain 上的余额..."
 
   if [ -z "${ETH_PRIVATE_KEY}" ] || [ "${ETH_PRIVATE_KEY}" = "0xYOUR_PRIVATE_KEY" ]; then
     log ERROR "ETH_PRIVATE_KEY 未配置或仍为占位值，请在环境变量或脚本中正确设置"
@@ -175,23 +175,23 @@ show_balances() {
     log INFO "TOKEN_ADDRESS 仍为占位值，跳过 Token 余额查询"
   fi
 
-  # 2. 查询默认 Injective 地址余额（如已配置 DEFAULT_INJ_ADDR）
+  # 2. 查询默认 biyachain 地址余额（如已配置 DEFAULT_INJ_ADDR）
   if [ -z "${DEFAULT_INJ_ADDR:-}" ]; then
-    log INFO "DEFAULT_INJ_ADDR 未配置，跳过 Injective 余额查询。"
+    log INFO "DEFAULT_INJ_ADDR 未配置，跳过 biyachain 余额查询。"
     return 0
   fi
 
   local inj_addr
   inj_addr="$DEFAULT_INJ_ADDR"
-  log INFO "Injective 地址: $inj_addr"
+  log INFO "biyachain 地址: $inj_addr"
 
   injectived q bank balances "$inj_addr" \
     --node "$INJ_NODE" \
     --chain-id "$INJ_CHAIN_ID" \
-    -o text || log ERROR "查询 Injective 余额失败"
+    -o text || log ERROR "查询 biyachain 余额失败"
 }
 
-########## deposit：从 Sepolia → Injective ##########
+########## deposit：从 Sepolia → biyachain ##########
 
 deposit_to_injective() {
   ensure_tools
@@ -296,14 +296,14 @@ deposit_to_injective() {
     --private-key "$ETH_PRIVATE_KEY" \
     --chain "$ETH_CHAIN_ID"
 
-  log INFO "deposit 交易已发送，请等待跨链桥在 Injective 上处理。"
+  log INFO "deposit 交易已发送，请等待跨链桥在 biyachain 上处理。"
 }
 
-########## withdraw：从 Injective → Sepolia ##########
+########## withdraw：从 biyachain → Sepolia ##########
 
 withdraw_to_sepolia() {
   ensure_tools
-  # 1. 使用已在脚本启动时确保存在的 Injective keyring 账户
+  # 1. 使用已在脚本启动时确保存在的 biyachain keyring 账户
   local inj_key_name
   inj_key_name="${INJ_ETH_KEY_NAME:-testOne}"
 
@@ -323,7 +323,7 @@ withdraw_to_sepolia() {
 
   # 3. 选择 withdraw 数量（Token，默认 10）
   local amount_token
-  read -r -p "请输入从 Injective withdraw 到 Sepolia 的 Token 数量（默认 10枚）: " amount_token
+  read -r -p "请输入从 biyachain withdraw 到 Sepolia 的 Token 数量（默认 10枚）: " amount_token
   if [ -z "$amount_token" ]; then
     amount_token="10"
   fi
@@ -350,7 +350,7 @@ withdraw_to_sepolia() {
   log INFO "  目标 EVM 地址: $dest_evm"
   log INFO "  withdraw 数量: $amount_token (底层单位: $amount_wei, coin: $amount_coin)"
   log INFO "  手续费金额: $fee_token (底层单位: $fee_wei, coin: $fee_coin)"
-  log INFO "  使用 Injective from: $inj_key_name (keyring-backend=file)"
+  log INFO "  使用 biyachain from: $inj_key_name (keyring-backend=file)"
 
   # 4. 发送 MsgSendToEthereum (send-to-eth)
   injectived tx peggy send-to-eth \
@@ -362,40 +362,40 @@ withdraw_to_sepolia() {
     --keyring-backend file \
     --gas auto \
     --gas-adjustment 1.5 \
-    --gas-prices 500000000inj \
+    --gas-prices 500000000byb \
     --node "$INJ_NODE" \
     --yes
 
-  log INFO "withdraw 交易已广播，请在 Injective 节点和桥的对端链路上观察跨链结果。"
+  log INFO "withdraw 交易已广播，请在 biyachain 节点和桥的对端链路上观察跨链结果。"
 }
 
-########## claimINJ：从 genesis 给指定 Injective 地址转账 inj 手续费 ##########
+########## claimINJ：从 genesis 给指定 biyachain 地址转账 byb 手续费 ##########
 
 claim_inj() {
   ensure_tools
 
-  # 1. 使用启动时已确保存在的 Injective eth-key（用于获取默认 inj 地址）
+  # 1. 使用启动时已确保存在的 biyachain eth-key（用于获取默认 byb 地址）
   local inj_key_name
   inj_key_name="${INJ_ETH_KEY_NAME:-testOne}"
 
-  # 尝试使用启动时计算好的默认 Injective 地址，避免再次触发密码输入
+  # 尝试使用启动时计算好的默认 biyachain 地址，避免再次触发密码输入
   local default_inj_addr
   default_inj_addr="${DEFAULT_INJ_ADDR:-}"
 
-  log INFO "claimINJ 将从 genesis 账户向目标 Injective 地址转账 inj，用于支付 gas。"
+  log INFO "claimINJ 将从 genesis 账户向目标 biyachain 地址转账 inj，用于支付 gas。"
 
   local to_addr
   if [ -n "$default_inj_addr" ]; then
-    read -r -p "请输入要接收 inj 的 Injective 地址 (inj...，默认: $default_inj_addr): " to_addr
+    read -r -p "请输入要接收 byb 的 biyachain 地址 (byb...，默认: $default_inj_addr): " to_addr
     if [ -z "$to_addr" ]; then
       to_addr="$default_inj_addr"
     fi
   else
-    read -r -p "请输入要接收 inj 的 Injective 地址 (inj...): " to_addr
+    read -r -p "请输入要接收 byb 的 biyachain 地址 (byb...): " to_addr
   fi
 
-  if [[ "$to_addr" != inj* ]]; then
-    log ERROR "Injective 地址应以 inj 开头，当前输入: $to_addr"
+  if [[ "$to_addr" != byb* ]]; then
+    log ERROR "biyachain 地址应以 byb 开头，当前输入: $to_addr"
     return 1
   fi
 
@@ -403,19 +403,19 @@ claim_inj() {
   local amount_display
   amount_display="10"
 
-  # inj 使用 18 位精度，将人类可读数量转换为最小单位: amount_display * 10^18
+  # byb 使用 18 位精度，将人类可读数量转换为最小单位: amount_display * 10^18
   local inj_decimals amount_raw
   inj_decimals=18
   if ! command_exists bc; then
-    log ERROR "系统未安装 bc，无法进行 inj 数量换算，请安装后重试 (例如: sudo apt-get install -y bc)"
+    log ERROR "系统未安装 bc，无法进行 byb 数量换算，请安装后重试 (例如: sudo apt-get install -y bc)"
     return 1
   fi
   amount_raw=$(echo "$amount_display * (10 ^ $inj_decimals)" | bc)
 
   local coin
-  coin="${amount_raw}inj"
+  coin="${amount_raw}byb"
 
-  log INFO "准备从 genesis 向 $to_addr 转账 ${amount_display}inj (底层单位: $amount_raw, coin: $coin) 作为手续费。"
+  log INFO "准备从 genesis 向 $to_addr 转账 ${amount_display}byb (底层单位: $amount_raw, coin: $coin) 作为手续费。"
   log INFO "接下来 injectived 会在前台提示输入密码，默认是 12345678（除非你改过）。"
 
   # 前台运行，用户按提示手动输入密码，行为与 biyaSetUp.sh 中类似
@@ -425,10 +425,10 @@ claim_inj() {
     --node "$INJ_NODE" \
     --gas auto \
     --gas-adjustment 1.5 \
-    --gas-prices 500000000inj \
+    --gas-prices 500000000byb \
     --yes
 
-  log INFO "claimINJ 交易已广播，请在 Injective 节点上查看余额变更。"
+  log INFO "claimINJ 交易已广播，请在 biyachain 节点上查看余额变更。"
 }
 
 ########## 主菜单 ##########
@@ -436,18 +436,18 @@ claim_inj() {
 main() {
   ensure_tools
 
-  # 在展示菜单前，先确保 Injective keyring 中已为 ETH_PRIVATE_KEY 准备好默认账户
+  # 在展示菜单前，先确保 biyachain keyring 中已为 ETH_PRIVATE_KEY 准备好默认账户
   ensure_injective_key_for_eth || {
-    log ERROR "初始化 Injective key 失败，退出脚本。"
+    log ERROR "初始化 biyachain key 失败，退出脚本。"
     exit 1
   }
 
   while true; do
     echo "###################### Bridge 脚本 ######################"
-    echo "1 - deposit: 从 Sepolia 向 Injective 跨链 Token"
-    echo "2 - withdraw: 从 Injective 向 Sepolia 跨链 Token"
-    echo "3 - balance: 查询任意 0x/inj 地址在 Sepolia 和 Injective 上的余额"
-    echo "4 - claimINJ: 从 genesis 给指定 Injective 地址转账 inj 手续费"
+    echo "1 - deposit: 从 Sepolia 向 biyachain 跨链 Token"
+    echo "2 - withdraw: 从 biyachain 向 Sepolia 跨链 Token"
+    echo "3 - balance: 查询任意 0x/byb 地址在 Sepolia 和 biyachain 上的余额"
+    echo "4 - claimINJ: 从 genesis 给指定 biyachain 地址转账 byb 手续费"
     echo "5 - exit: 退出脚本"
     echo "#########################################################"
 

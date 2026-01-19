@@ -2,18 +2,18 @@
 set -euo pipefail
 
 # 优先使用 Go 安装目录中的二进制（例如 /home/ubuntu/go/bin/injectived / peggo）
-# export PATH="$HOME/go/bin:$PATH"
+export PATH="$HOME/go/bin:$PATH"
 
 ########## 配置项 ##########
 
-TMP_DIR="/tmp/biya"
+TMP_DIR="/tmp/injective-release"
 
-# 使用 biya-coin 的仓库
-BIYA_CORE_REPO="https://github.com/biya-coin/biyachain-core.git"
-BIYA_CORE_DIR="${TMP_DIR}/biyachain-core"
+# 自定义 GitHub 仓库配置
+INJECTIVE_CORE_REPO="https://github.com/biya-coin/injective-core.git"
 
-# 固定 libwasmvm 版本 基于injective v1.17.0
+# 固定 libwasmvm 版本
 LIBWASMVM_VERSION="v2.1.5"
+
 
 # lucky meat time clip thank table ancient burden boil junk curtain benefit
 # Ethereum / Sepolia 相关配置（可按需修改）
@@ -23,11 +23,11 @@ ETH_RPC_URL="https://sepolia.infura.io/v3/7992c93ae01c402f806c5eec196f8c2b"
 ETH_PRIVATE_KEY="0x99f65f092924fd9c7cb8125255da54ca63733be861d5cdfdb570e41182100ba1"  # 不要提交真实私钥到仓库，此私钥为一次性私钥
 
 # 最小 ETH 余额（以 wei 为单位）
-MIN_ETH_BALANCE="10000000000000000"  # 0.01 ETH
-TARGET_ETH_BALANCE="30000000000000000"  # 0.03 ETH
+MIN_ETH_BALANCE="50000000000000000"  # 0.05 ETH
+TARGET_ETH_BALANCE="50000000000000000"  # 0.05 ETH
 
 # Injective 链配置
-INJ_CHAIN_ID="biyachain-1"              # 官方 setup.sh 中使用的 chain-id，可按需修改
+INJ_CHAIN_ID="injective-666"              # 官方 setup.sh 中使用的 chain-id，可按需修改
 INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
 INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
@@ -37,13 +37,6 @@ RESET_GENESIS=""   # 运行时由交互函数决定是否重置 genesis
 # Peggy 合约部署参数（覆盖 deploy-on-evm.sh 默认值）
 PEGGY_POWER_THRESHOLD="100"
 PEGGY_VALIDATOR_POWERS="4294967295"
-
-# PEGGY_DEPLOY_METHOD="etherman"
-PEGGY_DEPLOY_METHOD="hardhat"
-PEGGY_ID_STR="injective-peggyid"
-PEGGY_HARDHAT_REPO="https://github.com/biya-coin/peggy-bridge-contract.git"
-PEGGY_HARDHAT_DIR="${TMP_DIR}/peggy-bridge-contract"
-PEGGY_HARDHAT_SKIP_VERIFY="1"
 
 # Chainstream / JSON-RPC 相关配置（用于在节点启动时同时启用流服务）
 CHAINSTREAM_ADDR="${CHAINSTREAM_ADDR:-0.0.0.0:9999}"
@@ -57,48 +50,36 @@ PEGGY_DEPLOYER_TX_GAS_LIMIT="8000000"  # 提高默认 gas limit，避免合约�
 PEGGY_DEPLOYER_FROM=""              # 部署者地址，可选
 PEGGY_DEPLOYER_FROM_PK="${ETH_PRIVATE_KEY}"
 
-PEGGY_DEPLOYER_RPC_TIMEOUT="30s"
-PEGGY_DEPLOYER_TX_TIMEOUT="10m"
-PEGGY_DEPLOYER_CALL_TIMEOUT="30s"
+# 使用 biya-coin 的仓库
+INJECTIVE_CORE_REPO="https://github.com/biya-coin/injective-core.git"
+INJECTIVE_CORE_DIR="${TMP_DIR}/injective-core"
 
-###################### 新增：仅本地编译部署重启（使用 /tmp/injective-release/biyachain-core） ######################
+###################### 新增：仅本地编译部署重启（使用 /tmp/injective-release/injective-core） ######################
 
 local_rebuild_and_restart_from_tmp() {
-  echo "[local] 仅本地编译部署重启模式 (使用 ${BIYA_CORE_DIR})"
+  echo "[local] 仅本地编译部署重启模式 (使用 ${INJECTIVE_CORE_DIR})"
 
-  if [ ! -d "${BIYA_CORE_DIR}" ]; then
-    echo "[local] 错误: 未找到本地源码目录 ${BIYA_CORE_DIR}，请先运行完整初始化流程 (clone biyachain-core)" >&2
+  if [ ! -d "${INJECTIVE_CORE_DIR}" ]; then
+    echo "[local] 错误: 未找到本地源码目录 ${INJECTIVE_CORE_DIR}，请先运行完整初始化流程 (clone injective-core)" >&2
     return 1
   fi
 
   (
-    cd "${BIYA_CORE_DIR}" || {
-      echo "[local] 错误: 无法进入目录 ${BIYA_CORE_DIR}" >&2
+    cd "${INJECTIVE_CORE_DIR}" || {
+      echo "[local] 错误: 无法进入目录 ${INJECTIVE_CORE_DIR}" >&2
       return 1
     }
 
-    echo "[local] 在 ${BIYA_CORE_DIR} 中执行 go mod tidy..."
+    echo "[local] 在 ${INJECTIVE_CORE_DIR} 中执行 go mod tidy..."
     go mod tidy
 
-    echo "[local] 在 ${BIYA_CORE_DIR} 中执行 make install..."
+    echo "[local] 在 ${INJECTIVE_CORE_DIR} 中执行 make install..."
     make install
   )
 
-  local inj_bin
-  local peggo_bin
-  inj_bin="$(command -v injectived || true)"
-  peggo_bin="$(command -v peggo || true)"
-  if [ -n "$inj_bin" ] && [ -n "$peggo_bin" ]; then
-    sudo cp "$inj_bin" /usr/bin/injectived
-    sudo cp "$peggo_bin" /usr/bin/peggo
-  else
-    echo "[local] 错误: 未能定位 injectived 或 peggo 的可执行文件路径，无法拷贝到 /usr/bin" >&2
-    return 1
-  fi
-
-  echo "[local] 停止现有 byb / peggo / tmux 会话 (不删除数据目录)"
+  echo "[local] 停止现有 inj / peggo / tmux 会话 (不删除数据目录)"
   if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
+    tmux kill-session -t inj 2>/dev/null || true
     tmux kill-session -t orchestrator 2>/dev/null || true
   fi
   pkill -f injectived 2>/dev/null || true
@@ -222,52 +203,13 @@ cleanup_tmp_dir_prompt() {
   esac
 }
 
-cleanup_tmp_dir_before_download_prompt() {
-  if [ -z "${TMP_DIR:-}" ]; then
-    return 0
-  fi
-
-  if [ "$TMP_DIR" = "/" ] || [ "$TMP_DIR" = "." ]; then
-    echo "[cleanup] 错误: TMP_DIR 非法: ${TMP_DIR}" >&2
-    return 1
-  fi
-
-  if [ ! -d "$TMP_DIR" ]; then
-    mkdir -p "$TMP_DIR"
-    return 0
-  fi
-
-  echo "[cleanup] 临时目录位置: ${TMP_DIR}"
-  read -r -p "[cleanup] 是否在下载源码前清理该临时目录下的旧源码和中间文件？[y/N]: " ans
-  case "$ans" in
-    y|Y)
-      local keep_name
-      keep_name=""
-      if [ -n "${LOG_FILE:-}" ]; then
-        keep_name="$(basename "${LOG_FILE}")"
-      fi
-
-      if [ -n "$keep_name" ] && [ -f "${TMP_DIR}/${keep_name}" ]; then
-        find "$TMP_DIR" -mindepth 1 -maxdepth 1 ! -name "$keep_name" -exec rm -rf {} + 2>/dev/null || true
-        echo "[cleanup] 已清理 ${TMP_DIR}（保留 ${TMP_DIR}/${keep_name}）"
-      else
-        find "$TMP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-        echo "[cleanup] 已清理 ${TMP_DIR}"
-      fi
-      ;;
-    *)
-      echo "[cleanup] 已跳过 TMP_DIR 清理"
-      ;;
-  esac
-}
-
 ########## 统一清理函数：停止旧进程并重置链数据 ##########
 
 cleanup_injective_and_peggo() {
   echo "[cleanup] 停止旧的 injectived / peggo 进程和 tmux 会话（不在此处重置链数据）"
 
   if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
+    tmux kill-session -t inj 2>/dev/null || true
     tmux kill-session -t orchestrator 2>/dev/null || true
   fi
 
@@ -559,8 +501,8 @@ EOF
   local app_toml
   app_toml="${INJ_HOME_DIR}/config/app.toml"
   if [ -f "$app_toml" ]; then
-    if sed -i 's/^minimum-gas-prices *= ".*"/minimum-gas-prices = "0.0000001byb"/' "$app_toml"; then
-      echo "[genesis] 已将 app.toml 中的 minimum-gas-prices 设置为 0.0000001byb"
+    if sed -i 's/^minimum-gas-prices *= ".*"/minimum-gas-prices = "0.0000001inj"/' "$app_toml"; then
+      echo "[genesis] 已将 app.toml 中的 minimum-gas-prices 设置为 0.0000001inj"
     else
       echo "[genesis] 警告: 更新 app.toml 中的 minimum-gas-prices 失败，请手动检查" >&2
     fi
@@ -573,11 +515,11 @@ EOF
 
 register_orchestrator_address() {
   # 依赖前面从 genesis 解析出的 orchestrator / valoper / EVM 地址
-  # 其中 orchestrator 和 valoper 实际上都使用 genesis byb 地址
+  # 其中 orchestrator 和 valoper 实际上都使用 genesis inj 地址
   if [ -z "${GENESIS_INJ_ADDR:-}" ] || [ -z "${GENESIS_EVM_ADDR:-}" ]; then
-    echo "[orchestrator] 警告: 未检测到 genesis byb / EVM 地址变量，请确认脚本前面已经成功解析相关地址" >&2
+    echo "[orchestrator] 警告: 未检测到 genesis inj / EVM 地址变量，请确认脚本前面已经成功解析相关地址" >&2
     echo "[orchestrator] 如需手动执行注册命令，可使用:"
-    echo "  injectived tx peggy set-orchestrator-address \"<genesis byb address>\" \"<genesis byb address>\" \"<genesis EVM address>\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --yes --node=http://127.0.0.1:26657 --gas-prices=500000000byb"
+    echo "  injectived tx peggy set-orchestrator-address \"<genesis inj address>\" \"<genesis inj address>\" \"<genesis EVM address>\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --yes --node=http://127.0.0.1:26657 --gas-prices=500000000inj"
     return 0
   fi
 
@@ -596,7 +538,7 @@ register_orchestrator_address() {
   fi
 
   echo "[orchestrator] 即将发送注册 orchestrator 交易:"
-  echo "  injectived tx peggy set-orchestrator-address \"${GENESIS_INJ_ADDR}\" \"${GENESIS_INJ_ADDR}\" \"${GENESIS_EVM_ADDR}\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --yes --node=http://127.0.0.1:26657 --gas-prices=500000000byb"
+  echo "  injectived tx peggy set-orchestrator-address \"${GENESIS_INJ_ADDR}\" \"${GENESIS_INJ_ADDR}\" \"${GENESIS_EVM_ADDR}\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --yes --node=http://127.0.0.1:26657 --gas-prices=500000000inj"
   read -r -p "[orchestrator] 是否继续执行该交易？[y/N]: " confirm
   case "${confirm}" in
     y|Y)
@@ -606,7 +548,7 @@ register_orchestrator_address() {
         --keyring-backend=file \
         --yes \
         --node=http://127.0.0.1:26657 \
-        --gas-prices=500000000byb
+        --gas-prices=500000000inj
       ;;
     *)
       echo "[orchestrator] 已取消发送 orchestrator 注册交易"
@@ -617,7 +559,7 @@ register_orchestrator_address() {
 ########## 启动 injectived 节点（tmux + 日志） ##########
 
 start_injective_node() {
-  echo "[injective] 在 ${INJ_HOME_DIR} 中通过 tmux 启动 injectived，并输出日志到 logs/byb.log"
+  echo "[injective] 在 ${INJ_HOME_DIR} 中通过 tmux 启动 injectived，并输出日志到 logs/inj.log"
 
   if ! command_exists tmux; then
     echo "[injective] 警告: 未检测到 tmux，请先安装 tmux (例如: sudo apt-get install -y tmux)" >&2
@@ -626,21 +568,21 @@ start_injective_node() {
 
   mkdir -p "${INJ_HOME_DIR}/logs"
   # 启动前清理旧日志文件
-  rm -f "${INJ_HOME_DIR}/logs/byb.log"
+  rm -f "${INJ_HOME_DIR}/logs/inj.log"
   (
     cd "${INJ_HOME_DIR}" || exit 1
-    if tmux has-session -t byb 2>/dev/null; then
+    if tmux has-session -t inj 2>/dev/null; then
       echo "[injective] 检测到已有 tmux 会话 inj，先关闭旧会话"
-      tmux kill-session -t byb || true
+      tmux kill-session -t inj || true
     fi
 
-    tmux new -s byb -d "injectived \
+    tmux new -s inj -d "injectived \
       --log-level info \
       --api.address tcp://0.0.0.0:10337 \
       --grpc.address 0.0.0.0:9900 \
       --json-rpc.address 0.0.0.0:8546 \
       --json-rpc.ws-address 0.0.0.0:8547 \
-      --json-rpc.api 'eth,web3,net,txpool,debug,personal,byb' \
+      --json-rpc.api 'eth,web3,net,txpool,debug,personal,inj' \
       --json-rpc.enable=true \
       --json-rpc.allow-unprotected-txs=true \
       --json-rpc.txfee-cap=50 \
@@ -649,8 +591,8 @@ start_injective_node() {
       --chainstream-buffer-cap ${CHAINSTREAM_BUFFER_CAP} \
       --chainstream-publisher-buffer-cap ${CHAINSTREAM_PUBLISHER_BUFFER_CAP} \
       --home ${INJ_HOME_DIR} \
-      start 2>&1 | tee -a ./logs/byb.log"
-    echo "[injective] 已在 tmux 会话 byb 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/byb.log"
+      start 2>&1 | tee -a ./logs/inj.log"
+    echo "[injective] 已在 tmux 会话 inj 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/inj.log"
   )
 }
 
@@ -664,8 +606,8 @@ check_injective_health_or_fix() {
   while [ "$attempt" -le "$max_attempts" ]; do
     if curl -s "$rpc_url" | grep -q '"node_info"'; then
       if command_exists tmux; then
-        if tmux has-session -t byb 2>/dev/null; then
-          echo "[injective] 检测到节点 RPC 正常响应且 tmux 会话 byb 存在 (attempt=${attempt}/${max_attempts})"
+        if tmux has-session -t inj 2>/dev/null; then
+          echo "[injective] 检测到节点 RPC 正常响应且 tmux 会话 inj 存在 (attempt=${attempt}/${max_attempts})"
           return 0
         fi
       else
@@ -680,7 +622,7 @@ check_injective_health_or_fix() {
 
   echo "[injective] 节点在预期时间内未正常启动，将检查日志中是否存在初始化错误（仅提示，不自动重置链）..."
 
-  local log_file="${INJ_HOME_DIR}/logs/byb.log"
+  local log_file="${INJ_HOME_DIR}/logs/inj.log"
   if [ ! -f "$log_file" ]; then
     echo "[injective] 警告: 未找到节点日志文件 ${log_file}，无法自动诊断错误" >&2
     echo "[injective] 建议：先查看 bridge/setup 脚本输出，再手动检查 ${INJ_HOME_DIR} 下的日志。" >&2
@@ -784,8 +726,8 @@ PEGGO_COSMOS_CHAIN_ID="${INJ_CHAIN_ID}"
 PEGGO_COSMOS_GRPC="tcp://localhost:9900"
 PEGGO_TENDERMINT_RPC="http://127.0.0.1:26657"
 
-PEGGO_COSMOS_FEE_DENOM="byb"
-PEGGO_COSMOS_GAS_PRICES="1600000000byb"
+PEGGO_COSMOS_FEE_DENOM="inj"
+PEGGO_COSMOS_GAS_PRICES="1600000000inj"
 PEGGO_COSMOS_KEYRING="file"
 PEGGO_COSMOS_KEYRING_DIR="${INJ_HOME_DIR}"
 PEGGO_COSMOS_KEYRING_APP="injectived"
@@ -903,7 +845,7 @@ reset_chain_and_reregister_orchestrator() {
 
   echo "[reset] 停止当前 injectived 进程和 tmux 会话..."
   if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
+    tmux kill-session -t inj 2>/dev/null || true
   fi
   pkill -f injectived 2>/dev/null || true
 
@@ -1198,24 +1140,24 @@ install_injective_binaries() {
   fi
 
   # ========= 分支选择：先克隆到本地，再基于本地分支列表供用户选择 =========
-  echo "[injective] 正在克隆 biyachain-core 仓库用于分支选择..."
+  echo "[injective] 正在克隆 injective-core 仓库用于分支选择..."
 
   mkdir -p "${TMP_DIR}"
-  if [ -d "${BIYA_CORE_DIR}/.git" ]; then
-    cd "${BIYA_CORE_DIR}" || {
-      echo "错误: 无法进入仓库目录 ${BIYA_CORE_DIR}" >&2
+  if [ -d "${INJECTIVE_CORE_DIR}/.git" ]; then
+    cd "${INJECTIVE_CORE_DIR}" || {
+      echo "错误: 无法进入仓库目录 ${INJECTIVE_CORE_DIR}" >&2
       return 1
     }
     git fetch --all --prune >/dev/null 2>&1 || true
   else
-    rm -rf "${BIYA_CORE_DIR}"
-    mkdir -p "${BIYA_CORE_DIR}"
-    if ! git clone "$BIYA_CORE_REPO" "${BIYA_CORE_DIR}"; then
-      echo "错误: 无法克隆仓库，请检查网络连接和仓库URL: $BIYA_CORE_REPO" >&2
+    rm -rf "${INJECTIVE_CORE_DIR}"
+    mkdir -p "${INJECTIVE_CORE_DIR}"
+    if ! git clone "$INJECTIVE_CORE_REPO" "${INJECTIVE_CORE_DIR}"; then
+      echo "错误: 无法克隆仓库，请检查网络连接和仓库URL: $INJECTIVE_CORE_REPO" >&2
       return 1
     fi
-    cd "${BIYA_CORE_DIR}" || {
-      echo "错误: 无法进入仓库目录 ${BIYA_CORE_DIR}" >&2
+    cd "${INJECTIVE_CORE_DIR}" || {
+      echo "错误: 无法进入仓库目录 ${INJECTIVE_CORE_DIR}" >&2
       return 1
     }
     git fetch --all --prune >/dev/null 2>&1 || true
@@ -1273,19 +1215,19 @@ install_injective_binaries() {
     echo "无效选择，请输入 1-${#branches[@]} 之间的数字"
   done
 
-  BIYA_BRANCH="${branches[$selected_index]}"
+  INJ_BRANCH="${branches[$selected_index]}"
 
-  echo "[injective] 将使用分支: ${BIYA_BRANCH}"
+  echo "[injective] 将使用分支: ${INJ_BRANCH}"
 
   # 如果本地已存在同名分支，直接切换；否则从 origin 创建本地分支
-  if git show-ref --verify --quiet "refs/heads/${BIYA_BRANCH}"; then
-    git checkout "$BIYA_BRANCH" || {
-      echo "错误: 无法检出本地分支 ${BIYA_BRANCH}" >&2
+  if git show-ref --verify --quiet "refs/heads/${INJ_BRANCH}"; then
+    git checkout "$INJ_BRANCH" || {
+      echo "错误: 无法检出本地分支 ${INJ_BRANCH}" >&2
       return 1
     }
   else
-    git checkout -b "$BIYA_BRANCH" "origin/${BIYA_BRANCH}" || {
-      echo "错误: 无法从 origin/${BIYA_BRANCH} 创建本地分支" >&2
+    git checkout -b "$INJ_BRANCH" "origin/${INJ_BRANCH}" || {
+      echo "错误: 无法从 origin/${INJ_BRANCH} 创建本地分支" >&2
       return 1
     }
   fi
@@ -1299,18 +1241,6 @@ install_injective_binaries() {
   # 确保构建成功
   if ! command_exists injectived || ! command_exists peggo; then
     echo "[injective] 错误: 构建 injectived 或 peggo 失败" >&2
-    return 1
-  fi
-
-  local inj_bin
-  local peggo_bin
-  inj_bin="$(command -v injectived || true)"
-  peggo_bin="$(command -v peggo || true)"
-  if [ -n "$inj_bin" ] && [ -n "$peggo_bin" ]; then
-    sudo cp "$inj_bin" /usr/bin/injectived
-    sudo cp "$peggo_bin" /usr/bin/peggo
-  else
-    echo "[injective] 错误: 未能定位 injectived 或 peggo 的可执行文件路径，无法拷贝到 /usr/bin" >&2
     return 1
   fi
 
@@ -1355,13 +1285,13 @@ install_injective_binaries() {
   echo "[injective] peggo 版本: $(peggo version)"
 }
 
-########## 更新/同步 biyachain-core 仓库到 dev 分支 ##########
+########## 更新/同步 injective-core 仓库到 dev 分支 ##########
 
-update_and_sync_BIYA_CORE() {
-  local LOCAL_CORE_DIR="${BIYA_CORE_DIR}"
-  local target_branch="${BIYA_BRANCH:-dev}"
+update_and_sync_injective_core() {
+  local LOCAL_CORE_DIR="${INJECTIVE_CORE_DIR}"
+  local target_branch="${INJ_BRANCH:-dev}"
 
-  echo "[repo] 正在检查本地 biyachain-core 仓库: ${LOCAL_CORE_DIR}"
+  echo "[repo] 正在检查本地 injective-core 仓库: ${LOCAL_CORE_DIR}"
 
   if [ -d "$LOCAL_CORE_DIR" ]; then
     echo "[repo] 本地仓库存在，正在切换到 ${target_branch} 分支并强制同步..."
@@ -1380,14 +1310,14 @@ update_and_sync_BIYA_CORE() {
       else
         echo "[repo] 警告: ${LOCAL_CORE_DIR} 存在但不是 git 仓库，尝试重新克隆..."
         rm -rf "${LOCAL_CORE_DIR}"
-        git clone -b "${target_branch}" "${BIYA_CORE_REPO}" "${LOCAL_CORE_DIR}"
+        git clone -b "${target_branch}" "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
       fi
     )
   else
     echo "[repo] 本地仓库不存在，正在克隆 ${target_branch} 分支..."
     (
       mkdir -p "${TMP_DIR}"
-      git clone -b "${target_branch}" "${BIYA_CORE_REPO}" "${LOCAL_CORE_DIR}"
+      git clone -b "${target_branch}" "${INJECTIVE_CORE_REPO}" "${LOCAL_CORE_DIR}"
     )
   fi
 }
@@ -1395,6 +1325,9 @@ update_and_sync_BIYA_CORE() {
 ########## 初始化 Injective 链（官方 setup.sh） ##########
 
 setup_injective_chain() {
+  # 确保本地代码是最新的分支
+  update_and_sync_injective_core
+
   echo "[chain] 开始执行 Injective 节点初始化，chain-id=${INJ_CHAIN_ID}"
 
   # 在执行官方 setup.sh 之前，确保清理旧的 INJ_HOME_DIR，避免其内部因目录已存在而直接退出
@@ -1403,8 +1336,8 @@ setup_injective_chain() {
     rm -rf "${INJ_HOME_DIR}"
   fi
 
-  # 1) 定位本地 biyachain-core/setup.sh
-  local LOCAL_CORE_DIR="${BIYA_CORE_DIR}"
+  # 1) 定位本地 injective-core/setup.sh
+  local LOCAL_CORE_DIR="${INJECTIVE_CORE_DIR}"
   local LOCAL_SETUP_SCRIPT="${LOCAL_CORE_DIR}/setup.sh"
 
   if [ -f "$LOCAL_SETUP_SCRIPT" ]; then
@@ -1429,7 +1362,7 @@ setup_injective_chain() {
     )
 
   else
-    echo "[injective] 错误: 未找到本地 setup.sh (${LOCAL_SETUP_SCRIPT})，请先在本机 clone biyachain-core 仓库并确保存在 setup.sh" >&2
+    echo "[injective] 错误: 未找到本地 setup.sh (${LOCAL_SETUP_SCRIPT})，请先在本机 clone injective-core 仓库并确保存在 setup.sh" >&2
     exit 1
   fi
 
@@ -1518,7 +1451,7 @@ install_etherman() {
   echo "[etherman] etherman 已安装到 /usr/local/bin/etherman"
 }
 
-########## 部署 Peggy 合约 (biyachain-core / Sepolia) ##########
+########## 部署 Peggy 合约 (injective-core / Sepolia) ##########
 
 get_genesis_injective_address() {
   local inj_addr
@@ -1563,112 +1496,10 @@ maybe_set_default_validator_from_genesis() {
   GENESIS_EVM_ADDR="${genesis_evm_addr}"
 }
 
-deploy_peggy_contract_hardhat() {
-  echo "[peggy] 开始使用 Hardhat 部署 Peggy 合约，目标网络: ${ETH_NETWORK_NAME} (chainId=${ETH_CHAIN_ID})"
-
-  maybe_set_default_validator_from_genesis || return 1
-
-  if [ -z "$ETH_RPC_URL" ] || [ -z "$ETH_PRIVATE_KEY" ]; then
-    echo "[peggy] 错误: ETH_RPC_URL 或 ETH_PRIVATE_KEY 未配置，请在脚本配置区正确填写" >&2
-    return 1
-  fi
-
-  if ! command_exists node || ! command_exists npm; then
-    echo "[peggy] 错误: 未检测到 node/npm，请先安装 Node.js 与 npm" >&2
-    return 1
-  fi
-
-  if [ ! -d "${PEGGY_HARDHAT_DIR}/.git" ]; then
-    rm -rf "${PEGGY_HARDHAT_DIR}"
-    mkdir -p "${TMP_DIR}"
-    echo "[peggy] 克隆 peggy-bridge-contract 仓库: ${PEGGY_HARDHAT_REPO}"
-    git clone "${PEGGY_HARDHAT_REPO}" "${PEGGY_HARDHAT_DIR}" || return 1
-  fi
-
-  cd "${PEGGY_HARDHAT_DIR}" || return 1
-  git fetch --all --prune >/dev/null 2>&1 || true
-
-  if [ ! -d node_modules ] || [ ! -e node_modules/.bin/hardhat ]; then
-    if [ -d node_modules ] && [ ! -e node_modules/.bin/hardhat ]; then
-      echo "[peggy] 警告: 检测到 node_modules 但 hardhat 不存在，可能上次依赖安装未完成，尝试重装依赖"
-      rm -rf node_modules
-    fi
-    if [ -f package-lock.json ]; then
-      if ! npm ci; then
-        echo "[peggy] 警告: npm ci 失败（可能 package-lock.json 与 package.json 不一致），尝试 npm install 修复依赖/lockfile"
-        rm -rf node_modules
-        npm install || return 1
-      fi
-    else
-      npm install || return 1
-    fi
-  fi
-
-  cat > .env <<EOF
-PEGGY_ID="${PEGGY_ID_STR}"
-POWER_THRESHOLD=${PEGGY_POWER_THRESHOLD}
-VALIDATORS=${GENESIS_EVM_ADDR}
-POWERS=${PEGGY_VALIDATOR_POWERS}
-SEPOLIA_RPC_URL="${ETH_RPC_URL}"
-PRIVATE_KEY="${ETH_PRIVATE_KEY}"
-SKIP_VERIFY="${PEGGY_HARDHAT_SKIP_VERIFY}"
-EOF
-
-  echo "[peggy] 执行 Hardhat 部署脚本"
-  SKIP_VERIFY="${PEGGY_HARDHAT_SKIP_VERIFY}" npx hardhat run scripts/deploy.js --network "${ETH_NETWORK_NAME}" | tee hardhat-deploy.log || return 1
-
-  local peggy_addr
-  local peggy_block_height
-  peggy_addr="$(grep -E '^PEGGY_PROXY_ADDRESS=' hardhat-deploy.log | tail -n1 | cut -d= -f2 || true)"
-  peggy_block_height="$(grep -E '^PEGGY_PROXY_DEPLOY_BLOCK_NUMBER=' hardhat-deploy.log | tail -n1 | cut -d= -f2 || true)"
-
-  if [ -z "$peggy_block_height" ] && [ -n "$peggy_addr" ]; then
-    local rpc_height
-    rpc_height="$(get_peggy_block_height_from_rpc "$peggy_addr")"
-    if [ -n "$rpc_height" ]; then
-      peggy_block_height="$rpc_height"
-    fi
-  fi
-
-  if [ -n "$peggy_addr" ]; then
-    echo "[peggy] 解析到 Peggy 合约地址: ${peggy_addr}"
-  else
-    echo "[peggy] 错误: 未能从 hardhat-deploy.log 中解析出 Peggy 合约地址" >&2
-    return 1
-  fi
-
-  if [ -n "$peggy_block_height" ]; then
-    echo "[peggy] 解析到合约部署区块高度: ${peggy_block_height}"
-  else
-    echo "[peggy] 错误: 未能解析出部署区块高度，无法更新 genesis" >&2
-    return 1
-  fi
-
-  update_injective_genesis_with_peggy "$peggy_addr" "$peggy_block_height"
-}
-
 deploy_peggy_contract() {
-  if [ "${PEGGY_DEPLOY_METHOD:-etherman}" = "hardhat" ]; then
-    if deploy_peggy_contract_hardhat; then
-      return 0
-    fi
-
-    echo "[peggy] 警告: Hardhat 部署失败"
-    local fallback_confirm=""
-    read -r -p "[peggy] 是否回退使用 etherman 部署？[y/N]: " fallback_confirm || true
-    case "${fallback_confirm}" in
-      y|Y)
-        echo "[peggy] 将使用 etherman 进行部署"
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-  fi
-
   echo "[peggy] 开始部署 Peggy 合约，目标网络: ${ETH_NETWORK_NAME} (chainId=${ETH_CHAIN_ID})"
 
-  maybe_set_default_validator_from_genesis || return 1
+  maybe_set_default_validator_from_genesis
 
   if [ -z "$ETH_RPC_URL" ] || [ -z "$ETH_PRIVATE_KEY" ]; then
     echo "[peggy] 错误: ETH_RPC_URL 或 ETH_PRIVATE_KEY 未配置，请在脚本配置区正确填写" >&2
@@ -1690,16 +1521,16 @@ deploy_peggy_contract() {
     return 1
   fi
 
-  # 复用之前下载/构建使用的 biyachain-core 源码目录，如不存在则重新克隆
-  if [ ! -d "${BIYA_CORE_DIR}" ]; then
-    echo "[peggy] 未找到现有 biyachain-core 源码目录，将重新克隆仓库"
-    rm -rf "${BIYA_CORE_DIR}"
-    mkdir -p "${BIYA_CORE_DIR}"
-    cd "${BIYA_CORE_DIR}"
-    echo "[peggy] 克隆 biyachain-core 仓库: ${BIYA_CORE_REPO}"
-    git clone "${BIYA_CORE_REPO}" .
+  # 复用之前下载/构建使用的 injective-core 源码目录，如不存在则重新克隆
+  if [ ! -d "${INJECTIVE_CORE_DIR}" ]; then
+    echo "[peggy] 未找到现有 injective-core 源码目录，将重新克隆仓库"
+    rm -rf "${INJECTIVE_CORE_DIR}"
+    mkdir -p "${INJECTIVE_CORE_DIR}"
+    cd "${INJECTIVE_CORE_DIR}"
+    echo "[peggy] 克隆 injective-core 仓库: ${INJECTIVE_CORE_REPO}"
+    git clone "${INJECTIVE_CORE_REPO}" .
   else
-    cd "${BIYA_CORE_DIR}"
+    cd "${INJECTIVE_CORE_DIR}"
   fi
 
   cd peggo/solidity/deployment
@@ -1712,24 +1543,9 @@ deploy_peggy_contract() {
   echo "[peggy] 生成 .env 配置文件 (基于 .env.example)"
   cp .env.example .env
 
-  if ! grep -q '^DEPLOYER_RPC_TIMEOUT=' .env; then
-    echo "DEPLOYER_RPC_TIMEOUT=\"${PEGGY_DEPLOYER_RPC_TIMEOUT}\"" >> .env
-  fi
-
-  if ! grep -q '^DEPLOYER_TX_TIMEOUT=' .env; then
-    echo "DEPLOYER_TX_TIMEOUT=\"${PEGGY_DEPLOYER_TX_TIMEOUT}\"" >> .env
-  fi
-
-  if ! grep -q '^DEPLOYER_CALL_TIMEOUT=' .env; then
-    echo "DEPLOYER_CALL_TIMEOUT=\"${PEGGY_DEPLOYER_CALL_TIMEOUT}\"" >> .env
-  fi
-
   # 用配置区中的参数覆盖 .env 内的关键字段
   sed -i \
     -e "s|^DEPLOYER_RPC_URI=.*|DEPLOYER_RPC_URI=\"${PEGGY_DEPLOYER_RPC_URI}\"|" \
-    -e "s|^DEPLOYER_RPC_TIMEOUT=.*|DEPLOYER_RPC_TIMEOUT=\"${PEGGY_DEPLOYER_RPC_TIMEOUT}\"|" \
-    -e "s|^DEPLOYER_TX_TIMEOUT=.*|DEPLOYER_TX_TIMEOUT=\"${PEGGY_DEPLOYER_TX_TIMEOUT}\"|" \
-    -e "s|^DEPLOYER_CALL_TIMEOUT=.*|DEPLOYER_CALL_TIMEOUT=\"${PEGGY_DEPLOYER_CALL_TIMEOUT}\"|" \
     -e "s|^DEPLOYER_TX_GAS_PRICE=.*|DEPLOYER_TX_GAS_PRICE=${PEGGY_DEPLOYER_TX_GAS_PRICE}|" \
     -e "s|^DEPLOYER_TX_GAS_LIMIT=.*|DEPLOYER_TX_GAS_LIMIT=${PEGGY_DEPLOYER_TX_GAS_LIMIT}|" \
     -e "s|^DEPLOYER_FROM=.*|DEPLOYER_FROM=\"${PEGGY_DEPLOYER_FROM}\"|" \
@@ -1801,7 +1617,6 @@ ask_reset_genesis() {
 run_from_install_injective() {
   echo "[menu] 从安装 Injective 开始执行完整流程"
   cleanup_injective_and_peggo
-  cleanup_tmp_dir_before_download_prompt
   install_injective_binaries --force
   setup_injective_chain
   deploy_peggy_contract
@@ -1821,7 +1636,6 @@ run_from_reset_genesis() {
   echo "[menu] 从 genesis 重置开始执行（假定二进制已安装）"
   cleanup_injective_and_peggo
   ask_reset_genesis
-  update_and_sync_BIYA_CORE
   setup_injective_chain
   deploy_peggy_contract
   start_injective_node
@@ -1861,7 +1675,7 @@ run_build_and_restart_only() {
 
   # 2. 平滑停止现有节点 / peggo 进程和 tmux 会话（但不 reset 数据目录）
   if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
+    tmux kill-session -t inj 2>/dev/null || true
     tmux kill-session -t orchestrator 2>/dev/null || true
   fi
   pkill -f injectived 2>/dev/null || true
@@ -1877,16 +1691,16 @@ run_build_and_restart_only() {
 
 main() {
   echo "###################### 执行步骤 ######################"
-  echo "# 1、下载仓库 biya-coin/biyachain-core"
+  echo "# 1、下载仓库 biya-coin/injective-core"
   echo "# 2、安装依赖: go mod tidy"
   echo "# 3、make install，构建出 injectived 和 peggo"
-  echo "# 4、将 injectived 和 peggo 安装到系统 PATH（当前默认 /usr/bin），可直接执行"
+  echo "# 4、将 injectived 和 peggo 安装到系统 PATH（当前默认 $HOME/go/bin），可直接执行"
   echo "# 5、将 Peggy 合约部署到 Sepolia"
   echo "# 6、初始化 Injective 链：写入 Peggy 合约信息和 validator 初始信息到 genesis.json"
   echo "# 7、启动 Injective 节点"
   echo "# 8、配置 peggo 的 .env 文件"
   echo "# 9、启动 peggo orchestrator"
-  echo "# 10、从合约部署地址转移 0.03 个 ETH 至 orchestrator 地址"
+  echo "# 10、从合约部署地址转移 0.1 个 ETH 至 orchestrator 地址"
   echo "###################### 执行步骤 ######################"
   echo
 
@@ -1897,7 +1711,7 @@ main() {
   echo "3 - 仅配置 peggo (.env)"
   echo "4 - 只从github下载源码编译安装 injectived 和 peggo 并重启节点和bridge"
   echo "5 - 仅重启 Injective 节点和 peggo（不重新编译、不重新部署）"
-  echo "6 - 本地源码编译并重启（/tmp/injective-release/biyachain-core）"
+  echo "6 - 本地源码编译并重启（/tmp/injective-release/injective-core）"
   # echo "7 - 重置链并重新注册 orchestrator（unsafe-reset-all + 重启节点，仅在需要时使用）"
 
   read -r -p "请输入选择 [1/2/3/4/5/6] (默认 5): " choice
@@ -1926,7 +1740,7 @@ main() {
       ;;
   esac
 
-  echo "[setup] 任务执行完成。如需查看 Peggy 部署日志，请检查：${BIYA_CORE_DIR}/peggo/solidity/deployment/deploy.log"
+  echo "[setup] 任务执行完成。如需查看 Peggy 部署日志，请检查：${INJECTIVE_CORE_DIR}/peggo/solidity/deployment/deploy.log"
 }
 
 main "$@"
