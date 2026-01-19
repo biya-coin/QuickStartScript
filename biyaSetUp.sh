@@ -232,33 +232,36 @@ cleanup_tmp_dir_before_download_prompt() {
     return 1
   fi
 
+  case "$TMP_DIR" in
+    /tmp/*)
+      ;;
+    *)
+      echo "[cleanup] 警告: TMP_DIR 不在 /tmp 下，出于安全考虑跳过自动清理: ${TMP_DIR}" >&2
+      return 0
+      ;;
+  esac
+
   if [ ! -d "$TMP_DIR" ]; then
     mkdir -p "$TMP_DIR"
     return 0
   fi
 
   echo "[cleanup] 临时目录位置: ${TMP_DIR}"
-  read -r -p "[cleanup] 是否在下载源码前清理该临时目录下的旧源码和中间文件？[y/N]: " ans
-  case "$ans" in
-    y|Y)
-      local keep_name
-      keep_name=""
-      if [ -n "${LOG_FILE:-}" ]; then
-        keep_name="$(basename "${LOG_FILE}")"
-      fi
+  echo "[cleanup] 下载源码前清理 TMP_DIR ..."
 
-      if [ -n "$keep_name" ] && [ -f "${TMP_DIR}/${keep_name}" ]; then
-        find "$TMP_DIR" -mindepth 1 -maxdepth 1 ! -name "$keep_name" -exec rm -rf {} + 2>/dev/null || true
-        echo "[cleanup] 已清理 ${TMP_DIR}（保留 ${TMP_DIR}/${keep_name}）"
-      else
-        find "$TMP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-        echo "[cleanup] 已清理 ${TMP_DIR}"
-      fi
-      ;;
-    *)
-      echo "[cleanup] 已跳过 TMP_DIR 清理"
-      ;;
-  esac
+  local keep_name
+  keep_name=""
+  if [ -n "${LOG_FILE:-}" ]; then
+    keep_name="$(basename "${LOG_FILE}")"
+  fi
+
+  if [ -n "$keep_name" ] && [ -f "${TMP_DIR}/${keep_name}" ]; then
+    find "$TMP_DIR" -mindepth 1 -maxdepth 1 ! -name "$keep_name" -exec rm -rf {} + 2>/dev/null || true
+    echo "[cleanup] 已清理 ${TMP_DIR}（保留 ${TMP_DIR}/${keep_name}）"
+  else
+    find "$TMP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    echo "[cleanup] 已清理 ${TMP_DIR}"
+  fi
 }
 
 ########## 统一清理函数：停止旧进程并重置链数据 ##########
