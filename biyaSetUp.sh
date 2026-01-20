@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 优先使用 Go 安装目录中的二进制（例如 /home/ubuntu/go/bin/injectived / peggo）
+# 优先使用 Go 安装目录中的二进制（例如 /home/ubuntu/go/bin/biyachaind / peggo）
 # export PATH="$HOME/go/bin:$PATH"
 
 ########## 配置项 ##########
@@ -28,7 +28,7 @@ TARGET_ETH_BALANCE="30000000000000000"  # 0.03 ETH
 
 # Injective 链配置
 INJ_CHAIN_ID="biyachain-1"              # 官方 setup.sh 中使用的 chain-id，可按需修改
-INJ_HOME_DIR="$HOME/.injectived"         # 官方脚本默认 home 目录
+INJ_HOME_DIR="$HOME/.biyachaind"         # 官方脚本默认 home 目录
 INJ_GENESIS_PATH="${INJ_HOME_DIR}/config/genesis.json"
 INJ_OFFICIAL_SETUP_SCRIPT="${TMP_DIR}/injective-node-setup.sh"
 
@@ -40,7 +40,7 @@ PEGGY_VALIDATOR_POWERS="4294967295"
 
 # PEGGY_DEPLOY_METHOD="etherman"
 PEGGY_DEPLOY_METHOD="hardhat"
-PEGGY_ID_STR="injective-peggyid"
+PEGGY_ID_STR="biyachain-peggyid"
 PEGGY_HARDHAT_REPO="https://github.com/biya-coin/peggy-bridge-contract.git"
 PEGGY_HARDHAT_DIR="${TMP_DIR}/peggy-bridge-contract"
 PEGGY_HARDHAT_SKIP_VERIFY="1"
@@ -86,22 +86,22 @@ local_rebuild_and_restart_from_tmp() {
 
   local inj_bin
   local peggo_bin
-  inj_bin="$(command -v injectived || true)"
+  inj_bin="$(command -v biyachaind || true)"
   peggo_bin="$(command -v peggo || true)"
   if [ -n "$inj_bin" ] && [ -n "$peggo_bin" ]; then
-    sudo cp "$inj_bin" /usr/bin/injectived
+    sudo cp "$inj_bin" /usr/bin/biyachaind
     sudo cp "$peggo_bin" /usr/bin/peggo
   else
-    echo "[local] 错误: 未能定位 injectived 或 peggo 的可执行文件路径，无法拷贝到 /usr/bin" >&2
+    echo "[local] 错误: 未能定位 biyachaind 或 peggo 的可执行文件路径，无法拷贝到 /usr/bin" >&2
     return 1
   fi
 
-  echo "[local] 停止现有 byb / peggo / tmux 会话 (不删除数据目录)"
+  echo "[local] 停止现有 byb / peggo 进程和 tmux 会话 (不删除数据目录)"
   if command_exists tmux; then
     tmux kill-session -t byb 2>/dev/null || true
     tmux kill-session -t orchestrator 2>/dev/null || true
   fi
-  pkill -f injectived 2>/dev/null || true
+  pkill -f biyachaind 2>/dev/null || true
   pkill -f peggo 2>/dev/null || true
 
   echo "[local] 使用新编译的二进制重启节点和 peggo（复用现有链数据，不触发 setup.sh/genesis 重置）"
@@ -192,7 +192,6 @@ validate_environment() {
     return 0
 }
 
-
 cleanup() {
   local exit_code=$?
   # 调试阶段：暂时不自动删除 TMP_DIR，方便查看 deploy.log 等中间文件
@@ -267,7 +266,7 @@ cleanup_tmp_dir_before_download_prompt() {
 ########## 统一清理函数：停止旧进程并重置链数据 ##########
 
 cleanup_injective_and_peggo() {
-  echo "[cleanup] 停止旧的 injectived / peggo 进程和 tmux 会话（不在此处重置链数据）"
+  echo "[cleanup] 停止旧的 biyachaind / peggo 进程和 tmux 会话（不在此处重置链数据）"
 
   if command_exists tmux; then
     tmux kill-session -t byb 2>/dev/null || true
@@ -275,7 +274,7 @@ cleanup_injective_and_peggo() {
   fi
 
   # 尝试结束可能存在的裸进程（忽略错误）
-  pkill -f injectived 2>/dev/null || true
+  pkill -f biyachaind 2>/dev/null || true
   pkill -f peggo 2>/dev/null || true
 }
 
@@ -304,13 +303,13 @@ command_exists() {
 }
 
 check_injective_binary() {
-  if ! command_exists injectived; then
-    echo "[injective] 未检测到 injectived，将执行安装"
+  if ! command_exists biyachaind; then
+    echo "[injective] 未检测到 biyachaind，将执行安装"
     return 1
   fi
 
   local current_version
-  current_version="$(injectived version 2>/dev/null || echo "")"
+  current_version="$(biyachaind version 2>/dev/null || echo "")"
 
   if [ -z "${INJ_RELEASE_TAG:-}" ]; then
     echo "[injective] INJ_RELEASE_TAG 未配置，跳过版本校验"
@@ -324,11 +323,11 @@ check_injective_binary() {
 
   if echo "$current_version" | grep -q "$expected_version_part" && \
      echo "$current_version" | grep -q "$expected_commit_part"; then
-    echo "[injective] 检测到期望的 injectived: $current_version (匹配 INJ_RELEASE_TAG=$INJ_RELEASE_TAG)"
+    echo "[injective] 检测到期望的 biyachaind: $current_version (匹配 INJ_RELEASE_TAG=$INJ_RELEASE_TAG)"
     return 0
   fi
 
-  echo "[injective] 当前 injectived: $current_version"
+  echo "[injective] 当前 biyachaind: $current_version"
   echo "[injective] 预期版本/commit 来自 INJ_RELEASE_TAG=$INJ_RELEASE_TAG (版本: $expected_version_part, commit: $expected_commit_part)"
   return 1
 }
@@ -429,7 +428,7 @@ get_genesis_valoper_and_orchestrator() {
 
   # 某些环境下 debug addr 也会要求输入密码，这里默认使用 12345678 自动输入
   local debug_out
-  debug_out="$(printf '12345678\n' | injectived debug addr "${inj_addr}" 2>/dev/null || true)"
+  debug_out="$(printf '12345678\n' | biyachaind debug addr "${inj_addr}" 2>/dev/null || true)"
 
   local acc_addr valoper_addr
   acc_addr="$(echo "$debug_out" | awk '/Bech32 Acc:/ {print $3}' | head -n1)"
@@ -572,7 +571,7 @@ EOF
   fi
 }
 
-########## 启动 injectived 节点（tmux + 日志） ##########
+########## 启动 biyachaind 节点（tmux + 日志） ##########
 
 register_orchestrator_address() {
   # 依赖前面从 genesis 解析出的 orchestrator / valoper / EVM 地址
@@ -580,16 +579,16 @@ register_orchestrator_address() {
   if [ -z "${GENESIS_INJ_ADDR:-}" ] || [ -z "${GENESIS_EVM_ADDR:-}" ]; then
     echo "[orchestrator] 警告: 未检测到 genesis byb / EVM 地址变量，请确认脚本前面已经成功解析相关地址" >&2
     echo "[orchestrator] 如需手动执行注册命令，可使用:"
-    echo "  injectived tx peggy set-orchestrator-address \"<genesis byb address>\" \"<genesis byb address>\" \"<genesis EVM address>\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --yes --node=http://127.0.0.1:26657 --gas-prices=500000000byb"
+    echo "  biyachaind tx peggy set-orchestrator-address \"<genesis byb address>\" \"<genesis byb address>\" \"<genesis EVM address>\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --home=${INJ_HOME_DIR} --yes --node=http://127.0.0.1:26657 --gas-prices=500000000byb"
     return 0
   fi
 
   # 如果当前 valset 已包含 GENESIS_EVM_ADDR，则跳过注册
-  if command_exists injectived && command_exists jq; then
+  if command_exists biyachaind && command_exists jq; then
     local evm_lc
     evm_lc="$(echo "${GENESIS_EVM_ADDR}" | tr 'A-Z' 'a-z')"
 
-    if injectived q peggy current-valset \
+    if biyachaind q peggy current-valset \
         --chain-id="${INJ_CHAIN_ID}" \
         --node=http://127.0.0.1:26657 -o json 2>/dev/null \
       | jq -e --arg addr "$evm_lc" '.valset.members[].ethereum_address | ascii_downcase == $addr' >/dev/null 2>&1; then
@@ -599,14 +598,15 @@ register_orchestrator_address() {
   fi
 
   echo "[orchestrator] 即将发送注册 orchestrator 交易:"
-  echo "  injectived tx peggy set-orchestrator-address \"${GENESIS_INJ_ADDR}\" \"${GENESIS_INJ_ADDR}\" \"${GENESIS_EVM_ADDR}\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --yes --node=http://127.0.0.1:26657 --gas-prices=500000000byb"
+  echo "  biyachaind tx peggy set-orchestrator-address \"${GENESIS_INJ_ADDR}\" \"${GENESIS_INJ_ADDR}\" \"${GENESIS_EVM_ADDR}\" --from genesis --chain-id=${INJ_CHAIN_ID} --keyring-backend=file --home=${INJ_HOME_DIR} --yes --node=http://127.0.0.1:26657 --gas-prices=500000000byb"
   read -r -p "[orchestrator] 是否继续执行该交易？[y/N]: " confirm
   case "${confirm}" in
     y|Y)
-      injectived tx peggy set-orchestrator-address "${GENESIS_INJ_ADDR}" "${GENESIS_INJ_ADDR}" "${GENESIS_EVM_ADDR}" \
+      biyachaind tx peggy set-orchestrator-address "${GENESIS_INJ_ADDR}" "${GENESIS_INJ_ADDR}" "${GENESIS_EVM_ADDR}" \
         --from genesis \
         --chain-id="${INJ_CHAIN_ID}" \
         --keyring-backend=file \
+        --home "${INJ_HOME_DIR}" \
         --yes \
         --node=http://127.0.0.1:26657 \
         --gas-prices=500000000byb
@@ -617,10 +617,10 @@ register_orchestrator_address() {
   esac
 }
 
-########## 启动 injectived 节点（tmux + 日志） ##########
+########## 启动 biyachaind 节点（tmux + 日志） ##########
 
 start_injective_node() {
-  echo "[injective] 在 ${INJ_HOME_DIR} 中通过 tmux 启动 injectived，并输出日志到 logs/byb.log"
+  echo "[injective] 在 ${INJ_HOME_DIR} 中通过 tmux 启动 biyachaind，并输出日志到 logs/byb.log"
 
   if ! command_exists tmux; then
     echo "[injective] 警告: 未检测到 tmux，请先安装 tmux (例如: sudo apt-get install -y tmux)" >&2
@@ -637,7 +637,7 @@ start_injective_node() {
       tmux kill-session -t byb || true
     fi
 
-    tmux new -s byb -d "injectived \
+    tmux new -s byb -d "biyachaind \
       --log-level info \
       --api.address tcp://0.0.0.0:10337 \
       --grpc.address 0.0.0.0:9900 \
@@ -653,7 +653,7 @@ start_injective_node() {
       --chainstream-publisher-buffer-cap ${CHAINSTREAM_PUBLISHER_BUFFER_CAP} \
       --home ${INJ_HOME_DIR} \
       start 2>&1 | tee -a ./logs/byb.log"
-    echo "[injective] 已在 tmux 会话 byb 中启动 injectived（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/byb.log"
+    echo "[injective] 已在 tmux 会话 byb 中启动 biyachaind（启用 JSON-RPC 与 chainstream），日志: ${INJ_HOME_DIR}/logs/byb.log"
   )
 }
 
@@ -715,21 +715,21 @@ write_peggo_env() {
   if echo "${ETH_RPC_URL}" | grep -q '^https://'; then
     derived_ws_url="$(echo "${ETH_RPC_URL}" | sed 's/^https:/wss:/')"
   fi
-  # 优先尝试从 injectived keyring 中导出 genesis 账户对应的以太坊私钥
-  # 这里在前台直接调用 injectived，让其正常输出提示：
+  # 优先尝试从 biyachaind keyring 中导出 genesis 账户对应的以太坊私钥
+  # 这里在前台直接调用 biyachaind，让其正常输出提示：
   #   **WARNING this is an unsafe way to export your unencrypted private key**
   #   Enter key password:
   #   Enter keyring passphrase (attempt 1/3):
   # 用户可在这两个提示下输入密码（通常为 12345678，除非已修改）
   local exported_genesis_eth_pk=""
-  if command_exists injectived; then
+  if command_exists biyachaind; then
     local tmp_export_file
     tmp_export_file="$(mktemp)"
 
     if command_exists expect; then
-      echo "[peggo] 现在将前台执行 'injectived keys unsafe-export-eth-key genesis'，并使用 expect 自动输入默认密码..."
+      echo "[peggo] 现在将前台执行 'biyachaind keys unsafe-export-eth-key genesis'，并使用 expect 自动输入默认密码..."
       /usr/bin/expect <<EOF > "$tmp_export_file"
-spawn injectived keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
+spawn biyachaind keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
 expect "Enter key password:"
 send "12345678\r"
 expect "Enter keyring passphrase"
@@ -752,7 +752,7 @@ EOF
       if command_exists expect; then
         echo "[peggo] expect 安装成功，继续自动导出 genesis EVM 私钥..."
         /usr/bin/expect <<EOF > "$tmp_export_file"
-spawn injectived keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
+spawn biyachaind keys unsafe-export-eth-key genesis --home "${INJ_HOME_DIR}" --keyring-backend file
 expect "Enter key password:"
 send "12345678\r"
 expect "Enter keyring passphrase"
@@ -770,7 +770,7 @@ EOF
       fi
     fi
   else
-    echo "[peggo] 警告: 未找到 injectived 命令，无法自动导出 genesis EVM 私钥" >&2
+    echo "[peggo] 警告: 未找到 biyachaind 命令，无法自动导出 genesis EVM 私钥" >&2
   fi
 
   if [ -n "$exported_genesis_eth_pk" ]; then
@@ -791,7 +791,7 @@ PEGGO_COSMOS_FEE_DENOM="byb"
 PEGGO_COSMOS_GAS_PRICES="1600000000byb"
 PEGGO_COSMOS_KEYRING="file"
 PEGGO_COSMOS_KEYRING_DIR="${INJ_HOME_DIR}"
-PEGGO_COSMOS_KEYRING_APP="injectived"
+PEGGO_COSMOS_KEYRING_APP="biyachaind"
 PEGGO_COSMOS_FROM="genesis"
 PEGGO_COSMOS_FROM_PASSPHRASE="12345678"
 PEGGO_COSMOS_PK="${exported_genesis_eth_pk}"
@@ -802,7 +802,7 @@ PEGGO_ETH_KEYSTORE_DIR=""
 PEGGO_ETH_FROM=""
 PEGGO_ETH_PASSPHRASE=""
 
-# 默认使用从 injectived keyring 导出的 genesis EVM 私钥（如导出失败则为空，需手动填写）
+# 默认使用从 biyachaind keyring 导出的 genesis EVM 私钥（如导出失败则为空，需手动填写）
 PEGGO_ETH_PK="${exported_genesis_eth_pk}"
 
 PEGGO_ETH_GAS_PRICE_ADJUSTMENT="1.3"
@@ -874,7 +874,7 @@ restart_injective_and_peggo_only() {
   # 先停止现有 tmux 会话和裸进程
   cleanup_injective_and_peggo
 
-  # 启动 injectived 节点
+  # 启动 biyachaind 节点
   start_injective_node
 
   # 检查节点健康状态，如有必要尝试修复
@@ -904,14 +904,14 @@ reset_chain_and_reregister_orchestrator() {
       ;;
   esac
 
-  echo "[reset] 停止当前 injectived 进程和 tmux 会话..."
+  echo "[reset] 停止当前 biyachaind 进程和 tmux 会话..."
   if command_exists tmux; then
     tmux kill-session -t byb 2>/dev/null || true
   fi
-  pkill -f injectived 2>/dev/null || true
+  pkill -f biyachaind 2>/dev/null || true
 
   echo "[reset] 正在对 ${INJ_HOME_DIR} 执行 unsafe-reset-all --keep-addr-book..."
-  injectived tendermint unsafe-reset-all --keep-addr-book --home "${INJ_HOME_DIR}" || {
+  biyachaind tendermint unsafe-reset-all --keep-addr-book --home "${INJ_HOME_DIR}" || {
     echo "[reset] 错误：unsafe-reset-all 执行失败，请手动检查链数据目录 ${INJ_HOME_DIR}" >&2
     return 1
   }
@@ -1051,7 +1051,7 @@ check_and_topup_genesis_balance() {
 }
 
 install_injective_binaries() {
-  local need_injectived=false
+  local need_biyachaind=false
   local need_peggo=false
   local need_wasmvm=false
   local branch_choice
@@ -1066,8 +1066,8 @@ install_injective_binaries() {
   echo "[injective] 开始安装 / 校验 Injective 二进制文件"
   
   # 检查是否已经安装了必要的命令
-  if [ "$FORCE_INSTALL" = false ] && command_exists injectived && command_exists peggo && [ -f "${LIBWASMVM_TARGET_DIR}/libwasmvm.x86_64.so" ]; then
-    echo "[injective] 检测到已安装 injectived、peggo 和 libwasmvm，跳过安装"
+  if [ "$FORCE_INSTALL" = false ] && command_exists biyachaind && command_exists peggo && [ -f "${LIBWASMVM_TARGET_DIR}/libwasmvm.x86_64.so" ]; then
+    echo "[injective] 检测到已安装 biyachaind、peggo 和 libwasmvm，跳过安装"
     echo "[injective] 如需强制重新安装，请使用 --force 参数"
     return 0
   fi
@@ -1294,32 +1294,32 @@ install_injective_binaries() {
   fi
   
   echo "[injective] 当前构建目录: $(pwd)"
-  echo "[injective] 正在构建 injectived 和 peggo (make install)..."
+  echo "[injective] 正在构建 biyachaind 和 peggo (make install)..."
 
-  # 在仓库根目录构建 injectived 和 peggo（由项目 Makefile 决定具体安装内容）
+  # 在仓库根目录构建 biyachaind 和 peggo（由项目 Makefile 决定具体安装内容）
   make install
 
   # 确保构建成功
-  if ! command_exists injectived || ! command_exists peggo; then
-    echo "[injective] 错误: 构建 injectived 或 peggo 失败" >&2
+  if ! command_exists biyachaind || ! command_exists peggo; then
+    echo "[injective] 错误: 构建 biyachaind 或 peggo 失败" >&2
     return 1
   fi
 
   local inj_bin
   local peggo_bin
-  inj_bin="$(command -v injectived || true)"
+  inj_bin="$(command -v biyachaind || true)"
   peggo_bin="$(command -v peggo || true)"
   if [ -n "$inj_bin" ] && [ -n "$peggo_bin" ]; then
-    sudo cp "$inj_bin" /usr/bin/injectived
+    sudo cp "$inj_bin" /usr/bin/biyachaind
     sudo cp "$peggo_bin" /usr/bin/peggo
   else
-    echo "[injective] 错误: 未能定位 injectived 或 peggo 的可执行文件路径，无法拷贝到 /usr/bin" >&2
+    echo "[injective] 错误: 未能定位 biyachaind 或 peggo 的可执行文件路径，无法拷贝到 /usr/bin" >&2
     return 1
   fi
 
   # 打印当前版本信息
   echo "[injective] Injective 二进制文件安装完成，当前版本信息:"  
-  echo "  injectived: $(injectived version 2>/dev/null || echo 'unknown')"
+  echo "  biyachaind: $(biyachaind version 2>/dev/null || echo 'unknown')"
   echo "  peggo:     $(peggo version 2>/dev/null || echo 'unknown')"
 
   # 安装 wasmvm 库
@@ -1354,7 +1354,7 @@ install_injective_binaries() {
   echo "[injective] 安装完成"
   
   # 显示版本信息
-  echo "[injective] injectived 版本: $(injectived version)"
+  echo "[injective] biyachaind 版本: $(biyachaind version)"
   echo "[injective] peggo 版本: $(peggo version)"
 }
 
@@ -1420,15 +1420,15 @@ setup_injective_chain() {
     if [ -n "${INJ_CHAIN_ID:-}" ]; then
       echo "[injective] 使用 INJ_CHAIN_ID=${INJ_CHAIN_ID} 更新本地脚本中的默认链 ID"
       # Linux sed uses -i directly
-      sed -i "s/CHAINID=\"injective-1\"/CHAINID=\"${INJ_CHAIN_ID}\"/g" "$LOCAL_SETUP_SCRIPT" || true
+      sed -i "s/^CHAINID=\"[^\"]*\"/CHAINID=\"${INJ_CHAIN_ID}\"/g" "$LOCAL_SETUP_SCRIPT" || true
     fi
 
     echo "[chain] 切换到 ${LOCAL_CORE_DIR} 并执行 setup.sh..."
     # 3) 必须在 LOCAL_CORE_DIR 目录下执行，因为 setup.sh 内部使用相对路径 ./scripts/local-genesis
     (
       cd "$LOCAL_CORE_DIR"
-      # 传递 INJHOME 给 setup.sh (它会优先使用环境变量)
-      INJHOME="${INJ_HOME_DIR}" ./setup.sh
+      # 传递 BIYAHOME 给 setup.sh (它会优先使用环境变量)
+      BIYAHOME="${INJ_HOME_DIR}" ./setup.sh
     )
 
   else
@@ -1526,11 +1526,11 @@ install_etherman() {
 get_genesis_injective_address() {
   local inj_addr
   # 某些环境下读取 genesis 地址会要求输入密钥密码，这里默认使用 12345678 自动输入
-  inj_addr="$(printf '12345678\n' | injectived keys show genesis -a --home "${INJ_HOME_DIR}" --keyring-backend file 2>&1 || true)"
+  inj_addr="$(printf '12345678\n' | biyachaind keys show genesis -a --home "${INJ_HOME_DIR}" --keyring-backend file 2>&1 || true)"
 
 
   if [ -z "$inj_addr" ]; then
-    echo "[chain] 错误: 无法通过 'injectived keys show genesis -a' 获取创世地址" >&2
+    echo "[chain] 错误: 无法通过 'biyachaind keys show genesis -a' 获取创世地址" >&2
     return 1
   fi
 
@@ -1541,10 +1541,10 @@ get_evm_address_from_inj() {
   local inj_addr="$1"
   local hex
 
-  hex="$(injectived debug addr "${inj_addr}" 2>/dev/null | awk '/Address \(hex\):/ {print $3}' || true)"
+  hex="$(biyachaind debug addr "${inj_addr}" 2>/dev/null | awk '/Address \(hex\):/ {print $3}' || true)"
 
   if [ -z "$hex" ]; then
-    echo "[chain] 错误: 无法从 'injectived debug addr' 获取 EVM hex 地址" >&2
+    echo "[chain] 错误: 无法从 'biyachaind debug addr' 获取 EVM hex 地址" >&2
     return 1
   fi
 
@@ -1791,9 +1791,11 @@ ask_reset_genesis() {
 
   case "$choice" in
     1)
+      echo "[chain] 选择重置 genesis，将执行官方 setup.sh"
       RESET_GENESIS="yes"
       ;;
     *)
+      echo "[chain] 选择不重置 genesis，跳过官方 setup.sh"
       RESET_GENESIS="no"
       ;;
   esac
@@ -1852,12 +1854,12 @@ run_from_contract_deploy_only() {
 }
 
 run_from_peggo_config_only() {
-  echo "[menu] 仅执行 peggo 配置（生成 ~/.peggo/.env，不修改 Injective 配置，也不启动 peggo)"
+  echo "[menu] 仅执行 peggo 配置（生成 ~/.peggo/.env，不修改 Injective 配置，也不启动 peggo）"
   write_peggo_env
 }
 
 run_build_and_restart_only() {
-  echo "[menu] 仅重新编译安装 injectived 和 peggo 并重启节点（不重置链）"
+  echo "[menu] 仅重新编译安装 biyachaind 和 peggo 并重启节点（不重置链）"
 
   # 1. 先重新编译安装二进制，尽量缩短节点停机时间
   install_injective_binaries --force
@@ -1867,7 +1869,7 @@ run_build_and_restart_only() {
     tmux kill-session -t byb 2>/dev/null || true
     tmux kill-session -t orchestrator 2>/dev/null || true
   fi
-  pkill -f injectived 2>/dev/null || true
+  pkill -f biyachaind 2>/dev/null || true
   pkill -f peggo 2>/dev/null || true
 
   # 3. 使用新二进制重启节点和 peggo，沿用当前链数据
@@ -1882,8 +1884,8 @@ main() {
   echo "###################### 执行步骤 ######################"
   echo "# 1、下载仓库 biya-coin/biyachain-core"
   echo "# 2、安装依赖: go mod tidy"
-  echo "# 3、make install，构建出 injectived 和 peggo"
-  echo "# 4、将 injectived 和 peggo 安装到系统 PATH（当前默认 /usr/bin），可直接执行"
+  echo "# 3、make install，构建出 biyachaind 和 peggo"
+  echo "# 4、将 biyachaind 和 peggo 安装到系统 PATH（当前默认 /usr/bin），可直接执行"
   echo "# 5、将 Peggy 合约部署到 Sepolia"
   echo "# 6、初始化 Injective 链：写入 Peggy 合约信息和 validator 初始信息到 genesis.json"
   echo "# 7、启动 Injective 节点"
@@ -1898,7 +1900,7 @@ main() {
   echo "2 - 从重置 genesis 到跨链桥启动的完整流程"
   # echo "3 - 从合约部署到跨链桥启动的完整流程（暂时禁用）"
   echo "3 - 仅配置 peggo (.env)"
-  echo "4 - 只从github下载源码编译安装 injectived 和 peggo 并重启节点和bridge"
+  echo "4 - 只从github下载源码编译安装 biyachaind 和 peggo 并重启节点和bridge"
   echo "5 - 仅重启 Injective 节点和 peggo（不重新编译、不重新部署）"
   echo "6 - 本地源码编译并重启（/tmp/injective-release/biyachain-core）"
   # echo "7 - 重置链并重新注册 orchestrator（unsafe-reset-all + 重启节点，仅在需要时使用）"
