@@ -9,7 +9,7 @@ set -euo pipefail
 TMP_DIR="/tmp/biya"
 
 # 使用 biya-coin 的仓库
-BIYA_CORE_REPO="https://github.com/biya-coin/biyachain-core.git"
+BIYA_CORE_REPO="git@github.com:biya-coin/biyachain-core.git"
 BIYA_CORE_DIR="${TMP_DIR}/biyachain-core"
 
 # 固定 libwasmvm 版本 基于injective v1.17.0
