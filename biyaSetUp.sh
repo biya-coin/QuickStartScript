@@ -268,14 +268,8 @@ cleanup_tmp_dir_before_download_prompt() {
 cleanup_injective_and_peggo() {
   echo "[cleanup] 停止旧的 biyachaind / peggo 进程和 tmux 会话（不在此处重置链数据）"
 
-  if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
-    tmux kill-session -t orchestrator 2>/dev/null || true
-  fi
-
-  # 尝试结束可能存在的裸进程（忽略错误）
-  pkill -f biyachaind 2>/dev/null || true
-  pkill -f peggo 2>/dev/null || true
+  stop_tmux_session_processes byb
+  stop_tmux_session_processes orchestrator
 }
 
 # 源化 shell 配置文件以应用环境变量
@@ -300,6 +294,48 @@ source_shell_config() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+kill_process_tree() {
+  local pid="$1"
+  if [ -z "${pid}" ]; then
+    return 0
+  fi
+
+  local children
+  children="$(pgrep -P "${pid}" 2>/dev/null || true)"
+  if [ -n "${children}" ]; then
+    local child
+    for child in ${children}; do
+      kill_process_tree "${child}"
+    done
+  fi
+
+  kill -TERM "${pid}" 2>/dev/null || true
+  kill -KILL "${pid}" 2>/dev/null || true
+}
+
+stop_tmux_session_processes() {
+  local session="$1"
+
+  if ! command_exists tmux; then
+    return 0
+  fi
+
+  if ! tmux has-session -t "${session}" 2>/dev/null; then
+    return 0
+  fi
+
+  local pane_pids
+  pane_pids="$(tmux list-panes -t "${session}" -F "#{pane_pid}" 2>/dev/null || true)"
+  if [ -n "${pane_pids}" ]; then
+    local p
+    for p in ${pane_pids}; do
+      kill_process_tree "${p}"
+    done
+  fi
+
+  tmux kill-session -t "${session}" 2>/dev/null || true
 }
 
 check_injective_binary() {
@@ -905,10 +941,7 @@ reset_chain_and_reregister_orchestrator() {
   esac
 
   echo "[reset] 停止当前 biyachaind 进程和 tmux 会话..."
-  if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
-  fi
-  pkill -f biyachaind 2>/dev/null || true
+  stop_tmux_session_processes byb
 
   echo "[reset] 正在对 ${INJ_HOME_DIR} 执行 unsafe-reset-all --keep-addr-book..."
   biyachaind tendermint unsafe-reset-all --keep-addr-book --home "${INJ_HOME_DIR}" || {
@@ -1865,12 +1898,8 @@ run_build_and_restart_only() {
   install_injective_binaries --force
 
   # 2. 平滑停止现有节点 / peggo 进程和 tmux 会话（但不 reset 数据目录）
-  if command_exists tmux; then
-    tmux kill-session -t byb 2>/dev/null || true
-    tmux kill-session -t orchestrator 2>/dev/null || true
-  fi
-  pkill -f biyachaind 2>/dev/null || true
-  pkill -f peggo 2>/dev/null || true
+  stop_tmux_session_processes byb
+  stop_tmux_session_processes orchestrator
 
   # 3. 使用新二进制重启节点和 peggo，沿用当前链数据
   start_injective_node
